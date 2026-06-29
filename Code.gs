@@ -9,7 +9,7 @@ const SECRET_KEY = 'a4463116!';
 // SMS 앱에서 보낼 secret (같게 둬도 되고, 따로 둬도 됨)
 const SMS_SECRET = 'a4463116!';
 
-const BUSINESS_CARDS = ['롯데카드', '네이버파이낸셜'];   // 사업용 → pending 후보 등록
+const BUSINESS_CARDS = ['롯데카드', '라스베가스'];   // 사업용 → pending 후보 등록 (라스베가스=롯데카드 별칭)
 const PERSONAL_CARDS = ['현대카드'];   // 개인용 → excluded 기록
 
 // ── 상태 확인 + 진단용 (브라우저로 URL 접속 시) ───────────
@@ -183,7 +183,7 @@ function handleSms(payload) {
   Logger.log('sms_raw 시트에 기록 완료 (스프레드시트: ' + SpreadsheetApp.getActiveSpreadsheet().getName() + ')');
 
   // 카드사 판별
-  const cardMatch = body.match(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|네이버파이낸셜/);
+  const cardMatch = body.match(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|라스베가스/);
   const cardType  = cardMatch ? cardMatch[0] : '';
   Logger.log('인식된 카드: [' + cardType + ']');
 
@@ -260,12 +260,24 @@ function parseSmsBody(body, receivedAt) {
     date = y + '-' + mm + '-' + dd;
   }
 
-  const amtMatch = body.match(/([\d,]+)원/);
+  const amtMatch = body.replace(/누적\s*[\d,]+원/g, '').match(/([\d,]+)원/);
   const amount   = amtMatch ? parseInt(amtMatch[1].replace(/,/g, ''), 10) : 0;
 
-  let merchant = body
+  const merchant = extractMerchant(body);
+
+  return { date: date, amount: amount, merchant: merchant };
+}
+
+// 가맹점명: 카드 승인 문자의 첫 줄이 가맹점 (예: 네이버파이낸셜)
+function extractMerchant(body) {
+  const lines = String(body).split(/\n/).map(function (s) { return s.trim(); }).filter(Boolean);
+  const NOISE = /[\d,]+원|롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|라스베가스|승인|취소/;
+  if (lines.length > 1 && lines[0] && lines[0].indexOf('[') === -1 && !NOISE.test(lines[0])) {
+    return lines[0];
+  }
+  return body
     .replace(/\[.*?\]/g, '')
-    .replace(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|네이버파이낸셜/g, '')
+    .replace(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|라스베가스/g, '')
     .replace(/누적\s*[\d,]+원/g, '')
     .replace(/\d{1,4}[\/\-월]\d{1,2}[일]?(\s*\d{1,2}:\d{2})?/g, '')
     .replace(/[\d,]+원/g, '')
@@ -275,8 +287,6 @@ function parseSmsBody(body, receivedAt) {
     .replace(/\s{2,}/g, ' ')
     .trim()
     .split(/\s/)[0] || '(가맹점 미확인)';
-
-  return { date: date, amount: amount, merchant: merchant };
 }
 
 function suggestCategory(merchant) {

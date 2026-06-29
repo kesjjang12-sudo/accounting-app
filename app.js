@@ -490,7 +490,7 @@ function renderHome(el) {
     <div class="page-header">
       <div>
         <div class="page-title">홈 <span style="font-size:14px;font-weight:400;color:var(--gray-500);margin-left:6px">${curBizName}</span></div>
-        <div class="page-subtitle">전체 누적 현황 · 월별 손익 보고서 <span style="font-size:11px;color:var(--gray-400);margin-left:8px">v1.1 ✓ 네이버파이낸셜 지원</span></div>
+        <div class="page-subtitle">전체 누적 현황 · 월별 손익 보고서</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <button id="sheets-restore-btn" class="btn btn-ghost btn-sm" onclick="restoreFromSheets()">☁ 시트복원</button>
@@ -3296,22 +3296,29 @@ function parseSmsBody(body) {
       date = `${y}-${mm}-${dd}`;
     }
   }
-  // 금액: 숫자+쉼표+"원"
-  const amtMatch = body.match(/([\d,]+)원/);
+  // 금액: 숫자+쉼표+"원" (누적 제외)
+  const amtMatch = body.replace(/누적\s*[\d,]+원/g, '').match(/([\d,]+)원/);
   const amount = amtMatch ? parseInt(amtMatch[1].replace(/,/g, '')) : 0;
-  // 카드사
-  const cardMatch = body.match(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드/);
+  // 카드사 (라스베가스=롯데카드 별칭)
+  const cardMatch = body.match(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|라스베가스/);
   const cardType = cardMatch ? cardMatch[0] : '';
-  // 가맹점: 카드사명·날짜·금액·승인·취소 제거 후 남은 첫 단어
-  let merchant = body
-    .replace(/\[.*?\]/g, '')
-    .replace(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드/g, '')
-    .replace(/\d{1,4}[\/\-\.월]\d{1,2}[일]?(\s*\d{1,2}:\d{2})?/g, '')
-    .replace(/[\d,]+원/g, '')
-    .replace(/승인|취소|일시불|할부|포인트|캐시백/g, '')
-    .replace(/\s{2,}/g, ' ')
-    .trim()
-    .split(/\s/)[0] || '(가맹점 미확인)';
+  // 가맹점: 첫 줄이 가맹점명 (예: 네이버파이낸셜), 아니면 키워드 제거 후 첫 단어
+  const lines = body.split(/\n/).map(s => s.trim()).filter(Boolean);
+  const NOISE = /[\d,]+원|롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|라스베가스|승인|취소/;
+  let merchant;
+  if (lines.length > 1 && lines[0] && !lines[0].includes('[') && !NOISE.test(lines[0])) {
+    merchant = lines[0];
+  } else {
+    merchant = body
+      .replace(/\[.*?\]/g, '')
+      .replace(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|라스베가스/g, '')
+      .replace(/\d{1,4}[\/\-\.월]\d{1,2}[일]?(\s*\d{1,2}:\d{2})?/g, '')
+      .replace(/[\d,]+원/g, '')
+      .replace(/승인|취소|일시불|할부|포인트|캐시백/g, '')
+      .replace(/\s{2,}/g, ' ')
+      .trim()
+      .split(/\s/)[0] || '(가맹점 미확인)';
+  }
   return { date, amount, cardType, merchant };
 }
 
