@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>장부관리</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-logo">
+      <div class="logo-icon">📒</div>
+      <div class="logo-text">장부관리</div>
+    </div>
+    <div id="biz-switcher" style="padding:10px 10px 8px;border-bottom:1px solid #334155;"></div>
+    <nav class="sidebar-nav">
+      <a class="nav-item active" data-page="home">
+        <span class="nav-icon">🏠</span>
+        <span>홈</span>
+      </a>
+      <a class="nav-item" data-page="summary">
+        <span class="nav-icon">📊</span>
+        <span>집계</span>
+      </a>
+      <a class="nav-item" data-page="vendors">
+        <span class="nav-icon">🏢</span>
+        <span>거래처 관리</span>
+      </a>
+      <a class="nav-item" data-page="items">
+        <span class="nav-icon">📦</span>
+        <span>품목 관리</span>
+      </a>
+      <a class="nav-item" data-page="transactions">
+        <span class="nav-icon">📝</span>
+        <span>거래 내역</span>
+      </a>
+      <a class="nav-item" data-page="quotes">
+        <span class="nav-icon">📋</span>
+        <span>견적 / 발주</span>
+      </a>
+      <a class="nav-item" data-page="tax">
+        <span class="nav-icon">💰</span>
+        <span>세금 분석</span>
+      </a>
+      <a class="nav-item" data-page="candidates">
+        <span class="nav-icon">📱</span>
+        <span>사업비 후보</span>
+      </a>
+    </nav>
+  </aside>
+
+  <main class="main-content">
+    <div id="page-home"         class="page"></div>
+    <div id="page-summary"      class="page hidden"></div>
+    <div id="page-vendors"      class="page hidden"></div>
+    <div id="page-items"        class="page hidden"></div>
+    <div id="page-transactions" class="page hidden"></div>
+    <div id="page-quotes"       class="page hidden"></div>
+    <div id="page-tax"          class="page hidden"></div>
+    <div id="page-candidates"   class="page hidden"></div>
+  </main>
+
+  <!-- Modal -->
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div id="modal-box" class="modal-box">
+      <div class="modal-header">
+        <span id="modal-title" class="modal-title"></span>
+        <button class="modal-close" id="modal-close-btn">✕</button>
+      </div>
+      <div id="modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+  <script async src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+</body>
+</html>

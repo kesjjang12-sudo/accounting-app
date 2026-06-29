@@ -1,0 +1,10 @@
+# 개인 데이터 백업 파일
+*.json
+
+# OS
+.DS_Store
+Thumbs.db
+
+# 에디터
+.vscode/
+*.swp
