@@ -271,22 +271,24 @@ function updateCandidateStatus(id, status) {
 
 // ── SMS 파싱 ─────────────────────────────────────────────
 function parseSmsBody(body, receivedAt) {
+  // 날짜·시각: 문자 수신 시각(receivedAt) 기준 한국시간(KST)으로 기록
   let date = '';
-  const d1 = body.match(/(\d{4})-(\d{2})-(\d{2})/);
-  const d2 = body.match(/(\d{1,2})[\/월](\d{1,2})/);
-  if (d1) {
-    date = d1[0];
-  } else if (d2) {
-    const ref = isValidDate(receivedAt) ? new Date(receivedAt) : new Date();
-    const y   = ref.getFullYear();
-    const mm  = ('0' + d2[1]).slice(-2);
-    const dd  = ('0' + d2[2]).slice(-2);
-    date = y + '-' + mm + '-' + dd;
-  }
-  // 시각(HH:MM)이 있으면 날짜에 붙임 → "YYYY-MM-DD HH:MM"
-  const tMatch = body.match(/(\d{1,2}):(\d{2})/);
-  if (date && tMatch) {
-    date = date + ' ' + ('0' + tMatch[1]).slice(-2) + ':' + tMatch[2];
+  if (isValidDate(receivedAt)) {
+    date = Utilities.formatDate(new Date(receivedAt), 'Asia/Seoul', 'yyyy-MM-dd HH:mm');
+  } else {
+    // receivedAt이 없을 때만 본문에서 날짜/시각 추출
+    const d1 = body.match(/(\d{4})-(\d{2})-(\d{2})/);
+    const d2 = body.match(/(\d{1,2})[\/월](\d{1,2})/);
+    if (d1) {
+      date = d1[0];
+    } else if (d2) {
+      const ref = new Date();
+      date = ref.getFullYear() + '-' + ('0' + d2[1]).slice(-2) + '-' + ('0' + d2[2]).slice(-2);
+    }
+    const tMatch = body.match(/(\d{1,2}):(\d{2})/);
+    if (date && tMatch) {
+      date = date + ' ' + ('0' + tMatch[1]).slice(-2) + ':' + tMatch[2];
+    }
   }
 
   const amtMatch = body.replace(/누적\s*[\d,]+원/g, '').match(/([\d,]+)원/);
