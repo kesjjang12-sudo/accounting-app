@@ -9,7 +9,7 @@ const SECRET_KEY = 'a4463116!';
 // SMS 앱에서 보낼 secret (같게 둬도 되고, 따로 둬도 됨)
 const SMS_SECRET = 'a4463116!';
 
-const BUSINESS_CARDS = ['롯데카드'];   // 사업용 → pending 후보 등록
+const BUSINESS_CARDS = ['롯데카드', '네이버파이낸셜'];   // 사업용 → pending 후보 등록
 const PERSONAL_CARDS = ['현대카드'];   // 개인용 → excluded 기록
 
 // ── 상태 확인 + 진단용 (브라우저로 URL 접속 시) ───────────
@@ -183,7 +183,7 @@ function handleSms(payload) {
   Logger.log('sms_raw 시트에 기록 완료 (스프레드시트: ' + SpreadsheetApp.getActiveSpreadsheet().getName() + ')');
 
   // 카드사 판별
-  const cardMatch = body.match(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드/);
+  const cardMatch = body.match(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|네이버파이낸셜/);
   const cardType  = cardMatch ? cardMatch[0] : '';
   Logger.log('인식된 카드: [' + cardType + ']');
 
@@ -265,10 +265,13 @@ function parseSmsBody(body, receivedAt) {
 
   let merchant = body
     .replace(/\[.*?\]/g, '')
-    .replace(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드/g, '')
+    .replace(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|네이버파이낸셜/g, '')
+    .replace(/누적\s*[\d,]+원/g, '')
     .replace(/\d{1,4}[\/\-월]\d{1,2}[일]?(\s*\d{1,2}:\d{2})?/g, '')
     .replace(/[\d,]+원/g, '')
     .replace(/승인|취소|일시불|할부|포인트|캐시백/g, '')
+    .replace(/[가-힣]\*[가-힣]/g, '')
+    .replace(/[\d*]{3,}/g, '')
     .replace(/\s{2,}/g, ' ')
     .trim()
     .split(/\s/)[0] || '(가맹점 미확인)';
