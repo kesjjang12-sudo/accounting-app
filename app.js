@@ -3398,6 +3398,13 @@ function showPayslipMethod() {
 // ── 사업비 후보 ────────────────────────────────────────────
 function loadCandidates()          { return DBshared.load('acc_expense_candidates', '[]'); }
 function saveCandidates(list)      { DBshared.save('acc_expense_candidates', list); }
+// 삭제한 후보 id 기록 → 동기화 시 되살아나지 않게
+function loadDeletedCandIds()      { return DBshared.load('acc_deleted_candidates', '[]'); }
+function markCandDeleted(id) {
+  if (id == null) return;
+  const ids = loadDeletedCandIds();
+  if (!ids.includes(id)) { ids.push(id); DBshared.save('acc_deleted_candidates', ids); }
+}
 
 function suggestCategory(merchant) {
   const m = merchant || '';
@@ -3472,8 +3479,11 @@ async function fetchCandidatesFromGas(silent = false) {
     if (json.candidates) {
       const existing = loadCandidates();
       const existingIds = new Set(existing.map(c => c.id));
+      const deletedIds  = new Set(loadDeletedCandIds());
       const merged = [...existing];
-      json.candidates.forEach(c => { if (!existingIds.has(c.id)) merged.push(c); });
+      json.candidates.forEach(c => {
+        if (!existingIds.has(c.id) && !deletedIds.has(c.id)) merged.push(c);
+      });
       saveCandidates(merged);
       _candidatesCache = merged;
       return merged;
@@ -3860,6 +3870,7 @@ function saveCandidateMemo(idx) {
 function deleteCandidate(idx) {
   const c = _candidatesCache[idx];
   if (!c || !confirm(`"${c.merchant}" 항목을 삭제할까요?`)) return;
+  markCandDeleted(c.id);
   _candidatesCache.splice(idx, 1);
   saveCandidates(_candidatesCache);
   renderCandidatesPage(document.getElementById('page-candidates'));
