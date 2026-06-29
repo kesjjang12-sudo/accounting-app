@@ -490,7 +490,7 @@ function renderHome(el) {
     <div class="page-header">
       <div>
         <div class="page-title">홈 <span style="font-size:14px;font-weight:400;color:var(--gray-500);margin-left:6px">${curBizName}</span></div>
-        <div class="page-subtitle">전체 누적 현황 · 월별 손익 보고서</div>
+        <div class="page-subtitle">전체 누적 현황 · 월별 손익 보고서 <span style="font-size:11px;color:var(--gray-400);margin-left:8px">v1.1 ✓ 네이버파이낸셜 지원</span></div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
         <button id="sheets-restore-btn" class="btn btn-ghost btn-sm" onclick="restoreFromSheets()">☁ 시트복원</button>
