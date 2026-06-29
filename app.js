@@ -3296,22 +3296,26 @@ function parseSmsBody(body) {
       date = `${y}-${mm}-${dd}`;
     }
   }
+  // 시각(HH:MM)이 있으면 날짜에 붙임
+  const tMatch = body.match(/(\d{1,2}):(\d{2})/);
+  if (date && tMatch) date = `${date} ${String(tMatch[1]).padStart(2,'0')}:${tMatch[2]}`;
   // 금액: 숫자+쉼표+"원" (누적 제외)
   const amtMatch = body.replace(/누적\s*[\d,]+원/g, '').match(/([\d,]+)원/);
   const amount = amtMatch ? parseInt(amtMatch[1].replace(/,/g, '')) : 0;
-  // 카드사 (라스베가스=롯데카드 별칭)
-  const cardMatch = body.match(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|라스베가스/);
-  const cardType = cardMatch ? cardMatch[0] : '';
+  // 카드사 (라스베가스=롯데카드 별칭 → 롯데카드로 정규화)
+  const cardMatch = body.match(/라스베가스|롯데카드|현대카드/);
+  let cardType = cardMatch ? cardMatch[0] : '';
+  if (cardType === '라스베가스') cardType = '롯데카드';
   // 가맹점: 첫 줄이 가맹점명 (예: 네이버파이낸셜), 아니면 키워드 제거 후 첫 단어
   const lines = body.split(/\n/).map(s => s.trim()).filter(Boolean);
-  const NOISE = /[\d,]+원|롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|라스베가스|승인|취소/;
+  const NOISE = /[\d,]+원|라스베가스|롯데카드|현대카드|승인|취소/;
   let merchant;
   if (lines.length > 1 && lines[0] && !lines[0].includes('[') && !NOISE.test(lines[0])) {
     merchant = lines[0];
   } else {
     merchant = body
       .replace(/\[.*?\]/g, '')
-      .replace(/롯데카드|현대카드|삼성카드|신한카드|국민카드|우리카드|하나카드|BC카드|라스베가스/g, '')
+      .replace(/라스베가스|롯데카드|현대카드/g, '')
       .replace(/\d{1,4}[\/\-\.월]\d{1,2}[일]?(\s*\d{1,2}:\d{2})?/g, '')
       .replace(/[\d,]+원/g, '')
       .replace(/승인|취소|일시불|할부|포인트|캐시백/g, '')
@@ -3353,12 +3357,29 @@ async function fetchCandidatesFromGas() {
 
 const EXPENSE_CATS = ['접대비','차량유지비','통신비','비품구입','복리후생비','기타경비'];
 
-// 후보 날짜 표시 (NaN/빈값/잘못된 날짜 → 날짜미상)
+// 후보 날짜 표시 → "2026년 06월 28일 20시 30분" (시각 없으면 날짜만)
 function candDateText(d) {
-  if (!d || String(d).indexOf('NaN') > -1 || isNaN(new Date(d).getTime())) {
-    return '<span style="color:var(--gray-500)">날짜미상</span>';
+  if (!d) return '<span style="color:var(--gray-500)">날짜미상</span>';
+  const s = String(d);
+  let m = s.match(/(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})/);
+  if (m) {
+    let [, y, mo, da, hh, mi] = m;
+    if (/Z$/.test(s)) {                       // UTC 표기면 KST(+9)로 변환
+      const dt = new Date(s);
+      if (!isNaN(dt.getTime())) {
+        const k = new Date(dt.getTime() + 9 * 3600 * 1000);
+        y  = k.getUTCFullYear();
+        mo = String(k.getUTCMonth() + 1).padStart(2, '0');
+        da = String(k.getUTCDate()).padStart(2, '0');
+        hh = String(k.getUTCHours()).padStart(2, '0');
+        mi = String(k.getUTCMinutes()).padStart(2, '0');
+      }
+    }
+    return `${y}년 ${mo}월 ${da}일 ${hh}시 ${mi}분`;
   }
-  return d;
+  m = s.match(/(\d{4})-(\d{2})-(\d{2})/);      // 날짜만
+  if (m) return `${m[1]}년 ${m[2]}월 ${m[3]}일`;
+  return '<span style="color:var(--gray-500)">날짜미상</span>';
 }
 
 // ── 가맹점별 계정 학습 (3) ─────────────────────────────────
