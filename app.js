@@ -446,6 +446,8 @@ function navigate(page) {
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
   document.querySelectorAll('.page').forEach(el => el.classList.toggle('hidden', el.id !== 'page-' + page));
   render(page);
+  if (page === 'candidates') startCandidatesAutoSync();
+  else stopCandidatesAutoSync();
 }
 
 function render(page) {
@@ -3459,8 +3461,8 @@ function candidateId(date, merchant, amount) {
 
 let _candidatesCache = null;
 
-async function fetchCandidatesFromGas() {
-  if (!APPS_SCRIPT_URL) { alert('⚙ 시트 URL이 설정되지 않았습니다.'); return; }
+async function fetchCandidatesFromGas(silent = false) {
+  if (!APPS_SCRIPT_URL) { if (!silent) alert('⚙ 시트 URL이 설정되지 않았습니다.'); return; }
   try {
     const res  = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
@@ -3477,10 +3479,34 @@ async function fetchCandidatesFromGas() {
       return merged;
     }
   } catch (err) {
-    alert('GAS 연결 오류: ' + err.message);
+    if (!silent) alert('GAS 연결 오류: ' + err.message);
   }
   return null;
 }
+
+// 사업비 후보 페이지 자동 동기화 (입장 시 1회 + 1분마다)
+let _candAutoTimer = null;
+async function _candAutoSync() {
+  if (currentPage !== 'candidates' || !APPS_SCRIPT_URL) return;
+  const before = (_candidatesCache || loadCandidates()).length;
+  const merged = await fetchCandidatesFromGas(true);
+  if (currentPage !== 'candidates') return;
+  if (merged && merged.length !== before) {
+    const el = document.getElementById('page-candidates');
+    if (el) renderCandidatesPage(el);
+  }
+}
+function startCandidatesAutoSync() {
+  stopCandidatesAutoSync();
+  _candAutoSync();
+  _candAutoTimer = setInterval(_candAutoSync, 60000);
+}
+function stopCandidatesAutoSync() {
+  if (_candAutoTimer) { clearInterval(_candAutoTimer); _candAutoTimer = null; }
+}
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && currentPage === 'candidates') _candAutoSync();
+});
 
 const EXPENSE_CATS = ['접대비','차량유지비','통신비','비품구입','복리후생비','기타경비'];
 
@@ -3736,7 +3762,7 @@ function renderCandidatesPage(el) {
     <div class="page-header">
       <div>
         <div class="page-title">📱 사업비 후보</div>
-        <div class="page-subtitle">카드 승인 문자 → 확인 후 반영 · 반영액은 세금분석 경비로 합산됩니다</div>
+        <div class="page-subtitle">카드 승인 문자 → 확인 후 반영 · 반영액은 세금분석 경비로 합산됩니다 · 🔄 1분마다 자동 갱신</div>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn btn-ghost" onclick="exportExpensesExcel()">📊 경비 엑셀</button>
