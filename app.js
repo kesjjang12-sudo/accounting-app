@@ -244,6 +244,7 @@ function restoreAll(input) {
 }
 
 function switchBusiness(id) {
+  if (id === currentBizId) return;
   currentBizId = id;
   saveCurrentBiz();
   // 거래처·품목은 공유이므로 재로드 불필요
@@ -253,6 +254,9 @@ function switchBusiness(id) {
   renderSidebarBiz();
   renderTaxWidget();
   render(currentPage);
+  const mc = document.querySelector('.main-content');
+  if (mc) mc.scrollTop = 0;
+  window.scrollTo(0, 0);
 }
 
 function renderSidebarBiz() {
@@ -320,6 +324,13 @@ function deleteBiz(id) {
 
 function uid()  { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
 function debounce(fn, ms) { let t; return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); }; }
+// 검색 재렌더 후 입력창 포커스·커서 위치 복원 (한글 입력 끊김 방지)
+function refocusSearch(el, sel, pos) {
+  const input = el.querySelector(sel);
+  if (!input) return;
+  input.focus();
+  try { input.setSelectionRange(pos, pos); } catch (_) {}
+}
 function fmt(n) { return Number(n || 0).toLocaleString('ko-KR'); }
 function today(){ return new Date().toISOString().slice(0, 10); }
 
@@ -1529,7 +1540,7 @@ function renderVendors(el) {
       <tbody>${rows}</tbody>
     </table></div>`;
 
-  el.querySelector('#vendor-search').addEventListener('input', debounce(e => { vendorSearch = e.target.value; renderVendors(el); }, 300));
+  el.querySelector('#vendor-search').addEventListener('input', debounce(e => { const p = e.target.selectionStart; vendorSearch = e.target.value; renderVendors(el); refocusSearch(el, '#vendor-search', p); }, 300));
   _updateSelUI('vendors');
 }
 
@@ -1624,7 +1635,7 @@ function renderItems(el) {
       <tbody>${rows}</tbody>
     </table></div>`;
 
-  el.querySelector('#item-search').addEventListener('input', debounce(e => { itemSearch = e.target.value; renderItems(el); }, 300));
+  el.querySelector('#item-search').addEventListener('input', debounce(e => { const p = e.target.selectionStart; itemSearch = e.target.value; renderItems(el); refocusSearch(el, '#item-search', p); }, 300));
   _updateSelUI('items');
 }
 
@@ -1778,7 +1789,7 @@ function renderTransactions(el) {
       <tbody>${rows}</tbody>
     </table></div>`;
 
-  el.querySelector('#tx-search').addEventListener('input', debounce(e => { txSearch = e.target.value; renderTransactions(el); }, 300));
+  el.querySelector('#tx-search').addEventListener('input', debounce(e => { const p = e.target.selectionStart; txSearch = e.target.value; renderTransactions(el); refocusSearch(el, '#tx-search', p); }, 300));
   el.querySelector('#tx-type').addEventListener('change',   e => { txFilter.type = e.target.value;        renderTransactions(el); });
   el.querySelector('#tx-vendor').addEventListener('change', e => { txFilter.vendorId = e.target.value;    renderTransactions(el); });
   el.querySelector('#tx-paid').addEventListener('change',   e => { txFilter.paid = e.target.value;        renderTransactions(el); });
