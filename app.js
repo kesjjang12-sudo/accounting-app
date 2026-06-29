@@ -3145,6 +3145,8 @@ function recalcTax() {
       withheld, dependents,
     });
     const row = (label, val, color) => `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--gray-100)"><span style="color:var(--gray-500)">${label}</span><span style="${color||''}">${fmtW(val)}</span></div>`;
+    const deductRate = ps.gross > 0 ? (ps.deductM / ps.gross * 100).toFixed(1) : '0.0';
+    const taxHint = withheld > 0 ? '직접입력' : '자동추산 · 누진세율';
     pbox.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px">
         <div>
@@ -3154,19 +3156,20 @@ function recalcTax() {
         </div>
         <div>
           <div style="font-size:12px;font-weight:700;color:var(--gray-500);margin-bottom:4px">공제</div>
-          ${row('소득세', ps.incomeTaxM, 'color:var(--danger)')}
+          <div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--gray-100)"><span style="color:var(--gray-500)">소득세 <span style="font-size:10px;color:var(--gray-400)">(${taxHint})</span></span><span style="color:var(--danger)">${fmtW(ps.incomeTaxM)}</span></div>
           ${row('주민세 (지방소득세)', ps.localTaxM, 'color:var(--danger)')}
           ${row('국민연금', ps.pensionM, 'color:var(--danger)')}
           ${row('건강보험', ps.healthM, 'color:var(--danger)')}
           ${row('장기요양보험', ps.ltcM, 'color:var(--danger)')}
           ${row('고용보험', ps.employmentM, 'color:var(--danger)')}
-          <div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:700"><span>공제총액</span><span style="color:var(--danger)">${fmtW(ps.deductM)}</span></div>
+          <div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:700"><span>공제총액 <span style="font-size:11px;font-weight:400;color:var(--gray-500)">(공제율 ${deductRate}%)</span></span><span style="color:var(--danger)">${fmtW(ps.deductM)}</span></div>
         </div>
       </div>
       <div style="display:flex;justify-content:space-between;align-items:center;background:var(--primary-light);border-radius:var(--radius);padding:12px 16px;margin-top:12px">
         <span style="font-weight:700;color:var(--primary)">세후 월급 (실수령액)</span>
         <span style="font-weight:700;font-size:18px;color:var(--primary)">${fmtW(ps.net)}</span>
-      </div>`;
+      </div>
+      <div style="font-size:11px;color:var(--gray-500);margin-top:8px">소득세는 연봉 환산 후 근로소득공제·인적공제·국민연금공제를 반영한 누진세율(6~45%)로 추산합니다. 명세서 실제 소득세는 위 '원천징수 소득세(연간)' 칸에 입력하면 그대로 반영됩니다.</div>`;
   }
 
   const earnedDed    = calcEarnedIncomeDeduction(salary);
