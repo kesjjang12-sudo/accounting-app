@@ -67,10 +67,43 @@ async function runAutoSheetsBackup() {
       body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', data: storage })
     });
     const json = await res.json();
-    if (json.success) showSheetsBackupStatus('☁ 자동 백업 완료', 'success');
-    else              showSheetsBackupStatus('☁ 백업 실패', 'error');
+    if (json.success) { showSheetsBackupStatus('☁ 자동 백업 완료', 'success'); setBackupStatus(true); }
+    else              { showSheetsBackupStatus('☁ 백업 실패', 'error');      setBackupStatus(false); }
   } catch {
     showSheetsBackupStatus('☁ 백업 실패 (연결 오류)', 'error');
+    setBackupStatus(false);
+  }
+}
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+// 마지막 백업 시각/성공여부 기록 + 사이드바 상시 표시 갱신
+function setBackupStatus(ok) {
+  localStorage.setItem('acc_last_backup_at', new Date().toISOString());
+  localStorage.setItem('acc_last_backup_ok', ok ? '1' : '0');
+  renderBackupStatus();
+}
+
+function renderBackupStatus() {
+  const el = document.getElementById('backup-status');
+  if (!el) return;
+  if (!APPS_SCRIPT_URL || !SHEETS_SECRET) {
+    el.innerHTML = '<span style="color:#94a3b8">☁ 백업 미설정 (⚙ 시트설정)</span>';
+    return;
+  }
+  const at = localStorage.getItem('acc_last_backup_at');
+  if (!at) { el.innerHTML = '<span style="color:#94a3b8">☁ 백업 대기중…</span>'; return; }
+  const ok = localStorage.getItem('acc_last_backup_ok') !== '0';
+  const d  = new Date(at);
+  const hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  const stale = (Date.now() - d.getTime()) > 24 * 60 * 60 * 1000;
+  if (!ok) {
+    el.innerHTML = '<span style="color:#f87171;font-weight:600">⚠ 백업 실패 — 확인 필요</span>';
+  } else if (stale) {
+    const md = pad2(d.getMonth() + 1) + '/' + pad2(d.getDate());
+    el.innerHTML = '<span style="color:#fbbf24">☁ 마지막 백업 ' + md + ' ' + hm + ' (오래됨)</span>';
+  } else {
+    el.innerHTML = '<span style="color:#4ade80">☁ 마지막 백업 ' + hm + ' ✓</span>';
   }
 }
 
@@ -111,12 +144,90 @@ async function backupToSheets() {
       body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', data: storage })
     });
     const json = await res.json();
-    if (json.success) alert(`☁ 구글시트 백업 완료!\n${Object.keys(storage).length}개 항목 저장됨`);
-    else              alert('백업 실패: ' + (json.message || '알 수 없는 오류'));
+    if (json.success) { setBackupStatus(true);  alert(`☁ 구글시트 백업 완료!\n${Object.keys(storage).length}개 항목 저장됨`); }
+    else              { setBackupStatus(false); alert('백업 실패: ' + (json.message || '알 수 없는 오류')); }
   } catch (err) {
+    setBackupStatus(false);
     alert('연결 오류: ' + err.message + '\n\nURL이 올바른지 확인하세요.');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '☁ 시트백업'; }
+  }
+}
+
+// ── 안전저장(수동 스냅샷) / 되돌리기(스냅샷 복원) ─────────
+async function snapshotNow() {
+  if (!APPS_SCRIPT_URL) { openSheetsConfig(); return; }
+  const storage = {};
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i);
+    if (key.startsWith('acc_') || key === '_biz_migrated') storage[key] = localStorage.getItem(key);
+  }
+  const btn = document.getElementById('snapshot-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; }
+  try {
+    const res  = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', snapshot: 'force', data: storage })
+    });
+    const json = await res.json();
+    if (json.success) { setBackupStatus(true);  alert('🛟 안전저장 완료!\n현재 상태가 스냅샷으로 보관됐어요.\n(나중에 ↩ 되돌리기에서 이 시점으로 복원 가능)'); }
+    else              { setBackupStatus(false); alert('안전저장 실패: ' + (json.message || '오류')); }
+  } catch (err) {
+    setBackupStatus(false);
+    alert('연결 오류: ' + err.message);
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🛟 안전저장'; }
+  }
+}
+
+async function openSnapshotsModal() {
+  if (!APPS_SCRIPT_URL) { openSheetsConfig(); return; }
+  openModal('↩ 되돌리기 (스냅샷 복원)', '<div style="padding:20px;text-align:center;color:var(--gray-500)">스냅샷 목록 불러오는 중…</div>');
+  try {
+    const res  = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'listSnapshots' })
+    });
+    const json = await res.json();
+    const body = document.getElementById('modal-body');
+    if (!body) return;
+    if (!json.success) { body.innerHTML = '<div style="padding:20px;color:var(--danger)">목록 불러오기 실패: ' + (json.message || '오류') + '</div>'; return; }
+    const snaps = json.snapshots || [];
+    if (!snaps.length) { body.innerHTML = '<div style="padding:20px;color:var(--gray-500)">아직 보관된 스냅샷이 없어요. 데이터를 저장하면 자동으로 쌓이고, 🛟 안전저장으로 직접 만들 수도 있어요.</div>'; return; }
+    const rows = snaps.map(s => {
+      const d  = new Date(s.epoch);
+      const ts = `${d.getFullYear()}-${pad2(d.getMonth()+1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+      return `<div style="display:flex;justify-content:space-between;align-items:center;gap:10px;padding:10px 4px;border-bottom:1px solid var(--gray-100)">
+        <div><div style="font-weight:600">${ts}</div><div style="font-size:12px;color:var(--gray-500)">거래 ${s.txCount}건</div></div>
+        <button class="btn btn-primary btn-sm" onclick="restoreSnapshotById('${s.id}')">이 시점으로 복원</button>
+      </div>`;
+    }).join('');
+    body.innerHTML = `<div style="font-size:12px;color:var(--gray-500);margin-bottom:10px;line-height:1.6">복원할 시점을 고르세요. ⚠ 현재 데이터는 덮어쓰기 됩니다.<br>걱정되면 복원 전에 <b>🛟 안전저장</b>으로 현재 상태부터 찍어두세요.</div>${rows}`;
+  } catch (err) {
+    const body = document.getElementById('modal-body');
+    if (body) body.innerHTML = '<div style="padding:20px;color:var(--danger)">연결 오류: ' + err.message + '</div>';
+  }
+}
+
+async function restoreSnapshotById(id) {
+  if (!confirm('이 시점으로 되돌립니다.\n⚠ 현재 데이터는 모두 덮어쓰기 됩니다.\n계속할까요?')) return;
+  try {
+    const res  = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'restoreSnapshot', id })
+    });
+    const json = await res.json();
+    if (json.success && json.data) {
+      const count = Object.keys(json.data).length;
+      if (!count) { alert('스냅샷이 비어있습니다.'); return; }
+      Object.entries(json.data).forEach(([k, v]) => localStorage.setItem(k, v));
+      alert(`↩ 복원 완료! ${count}개 항목을 불러왔습니다.\n앱을 새로고침합니다.`);
+      location.reload();
+    } else {
+      alert('복원 실패: ' + (json.message || '오류'));
+    }
+  } catch (err) {
+    alert('연결 오류: ' + err.message);
   }
 }
 
@@ -175,6 +286,7 @@ function saveSheetsConfig() {
   localStorage.setItem('acc_sheets_url', APPS_SCRIPT_URL);
   localStorage.setItem('acc_sheets_key', SHEETS_SECRET);
   closeModal();
+  renderBackupStatus();
   alert('설정이 저장됐습니다.');
 }
 
@@ -506,6 +618,8 @@ function renderHome(el) {
         <div class="page-subtitle">전체 누적 현황 · 월별 손익 보고서</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <button id="snapshot-btn" class="btn btn-ghost btn-sm" onclick="snapshotNow()">🛟 안전저장</button>
+        <button class="btn btn-ghost btn-sm" onclick="openSnapshotsModal()">↩ 되돌리기</button>
         <button id="sheets-restore-btn" class="btn btn-ghost btn-sm" onclick="restoreFromSheets()">☁ 시트복원</button>
         <button id="sheets-backup-btn"  class="btn btn-ghost btn-sm" onclick="backupToSheets()">☁ 시트백업</button>
         <button class="btn btn-ghost btn-sm" onclick="openSheetsConfig()">⚙ 시트설정</button>
@@ -4268,4 +4382,5 @@ document.addEventListener('DOMContentLoaded', () => {
   });
   renderSidebarBiz();
   render('home');
+  renderBackupStatus();
 });
