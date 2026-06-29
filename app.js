@@ -2803,7 +2803,7 @@ function calcEarnedIncomeDeduction(salary) {
 function calcInsuranceEstimate(salary) {
   const m = salary / 12;
   return {
-    pension:    Math.round(Math.min(m, 5900000) * 0.045 * 12),
+    pension:    Math.round(Math.min(m, 6170000) * 0.045 * 12),
     health:     Math.round(m * 0.03545 * 12),
     ltc:        Math.round(m * 0.03545 * 12 * 0.1295),
     employment: Math.round(m * 0.009 * 12),
@@ -2812,6 +2812,39 @@ function calcInsuranceEstimate(salary) {
 function calcInsurance(salary) {
   const e = calcInsuranceEstimate(salary);
   return e.pension + e.health + e.ltc + e.employment;
+}
+
+// 월급 명세 추산 (지급/공제/실수령). 4대보험·소득세는 연간 override 있으면 우선 적용.
+function calcMonthlyPayslip(annualSalary, ov) {
+  ov = ov || {};
+  const gross = Math.round(annualSalary / 12);
+  const est   = calcInsuranceEstimate(annualSalary);
+  const pension    = ov.pension    ?? est.pension;
+  const health     = ov.health     ?? est.health;
+  const ltc        = ov.ltc        ?? est.ltc;
+  const employment = ov.employment ?? est.employment;
+
+  let incomeTaxAnnual;
+  if (ov.withheld) {
+    incomeTaxAnnual = ov.withheld;
+  } else {
+    const earnedDed    = calcEarnedIncomeDeduction(annualSalary);
+    const earnedIncome = annualSalary - earnedDed;
+    const personalDed  = (1 + (ov.dependents || 0)) * 1500000;
+    const taxable      = Math.max(0, earnedIncome - personalDed - pension);
+    const gross2       = calcIncomeTax(taxable);
+    const credit       = calcEarnedIncomeCredit(annualSalary, gross2);
+    incomeTaxAnnual    = Math.max(0, gross2 - credit);
+  }
+
+  const incomeTaxM  = Math.round(incomeTaxAnnual / 12);
+  const localTaxM   = Math.round(incomeTaxM * 0.1);
+  const pensionM    = Math.round(pension / 12);
+  const healthM     = Math.round(health / 12);
+  const ltcM        = Math.round(ltc / 12);
+  const employmentM = Math.round(employment / 12);
+  const deductM     = incomeTaxM + localTaxM + pensionM + healthM + ltcM + employmentM;
+  return { gross, incomeTaxM, localTaxM, pensionM, healthM, ltcM, employmentM, deductM, net: gross - deductM };
 }
 
 function calcCardDeduction(salary, creditCard, debitCash) {
@@ -2893,13 +2926,32 @@ function getAllBizIncome() {
 }
 
 // 숫자 입력 쉼표 포맷
-function onNumInput(el) {
+function fmtField(el) {
   const pos    = el.selectionStart;
   const oldLen = el.value.length;
   const digits  = el.value.replace(/[^0-9]/g, '');
   const formatted = digits ? Number(digits).toLocaleString('ko-KR') : '';
   el.value = formatted;
   el.selectionStart = el.selectionEnd = Math.max(0, pos + (formatted.length - oldLen));
+}
+function onNumInput(el) {
+  fmtField(el);
+  recalcTax();
+}
+// 세전 연봉 입력 → 세전 월급 동기화
+function onSalaryInput(el) {
+  fmtField(el);
+  const annual = parseNum('ti-salary');
+  const m = document.getElementById('ti-msalary');
+  if (m) m.value = annual ? Math.round(annual / 12).toLocaleString('ko-KR') : '';
+  recalcTax();
+}
+// 세전 월급 입력 → 세전 연봉 동기화
+function onMonthlyInput(el) {
+  fmtField(el);
+  const monthly = parseNum('ti-msalary');
+  const s = document.getElementById('ti-salary');
+  if (s) s.value = monthly ? Math.round(monthly * 12).toLocaleString('ko-KR') : '';
   recalcTax();
 }
 function parseNum(id) {
@@ -2937,13 +2989,19 @@ function renderTaxPage(el) {
       <div class="card">
         <div style="font-size:13px;font-weight:700;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--gray-200)">👔 근로소득</div>
         <div style="display:flex;flex-direction:column;gap:10px">
-          <div class="form-group">
-            <label>세전 연봉</label>
-            ${ni('ti-salary', salary0)}
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            <div class="form-group">
+              <label>세전 연봉</label>
+              <input type="text" inputmode="numeric" id="ti-salary" class="form-control" value="${numFmt(salary0)}" placeholder="0" oninput="onSalaryInput(this)" style="text-align:right">
+            </div>
+            <div class="form-group">
+              <label>세전 월급 <span style="font-size:11px;font-weight:400;color:var(--gray-500)">(연봉÷12)</span></label>
+              <input type="text" inputmode="numeric" id="ti-msalary" class="form-control" value="${numFmt(Math.round(salary0/12))}" placeholder="0" oninput="onMonthlyInput(this)" style="text-align:right">
+            </div>
           </div>
           <div class="form-group">
             <label>원천징수 소득세 (연간) <span style="font-size:11px;font-weight:400;color:var(--gray-500)">급여명세서 소득세 합산</span></label>
-            ${ni('ti-withheld', settings.withheld, '0 (모르면 0)')}
+            ${ni('ti-withheld', settings.withheld, '0 (모르면 자동추산)')}
           </div>
           <div style="font-size:12px;font-weight:600;color:var(--gray-500)">4대보험 연간 납부액 (빈칸 = 자동추산)</div>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
@@ -2986,6 +3044,15 @@ function renderTaxPage(el) {
           </div>
         </div>
       </div>
+    </div>
+
+    <!-- 월급 명세 (추산) -->
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;padding-bottom:8px;border-bottom:1px solid var(--gray-200)">
+        <div style="font-size:13px;font-weight:700">📄 월급 명세 (추산) <span style="font-size:11px;font-weight:400;color:var(--gray-500)">— 세전 연봉·월급 입력 시 4대보험·세후 월급 자동 계산</span></div>
+        <button class="btn btn-ghost btn-sm" onclick="showPayslipMethod()">계산방법보기</button>
+      </div>
+      <div id="payslip-box"></div>
     </div>
 
     <!-- 기타 사업경비 -->
@@ -3062,6 +3129,45 @@ function recalcTax() {
   const fmtW = n => (n < 0 ? '-' : '') + '₩' + Math.abs(Math.round(n)).toLocaleString('ko-KR');
   const dueBg  = n => n >= 0 ? 'color:var(--danger)' : 'color:var(--success)';
   const dueStr = n => n >= 0 ? fmtW(n) : '환급 ' + fmtW(Math.abs(n));
+
+  // 4대보험 자동추산 placeholder 실시간 갱신
+  const phN = n => Math.round(n).toLocaleString('ko-KR') + ' 추산';
+  const setPh = (id, v) => { const e = document.getElementById(id); if (e) e.placeholder = phN(v); };
+  setPh('ti-pension', est.pension); setPh('ti-health', est.health);
+  setPh('ti-ltc', est.ltc);         setPh('ti-employment', est.employment);
+
+  // 월급 명세 (지급/공제/실수령) 추산
+  const pbox = document.getElementById('payslip-box');
+  if (pbox) {
+    const ps = calcMonthlyPayslip(salary, {
+      pension: parseNumNull('ti-pension'), health: parseNumNull('ti-health'),
+      ltc: parseNumNull('ti-ltc'), employment: parseNumNull('ti-employment'),
+      withheld, dependents,
+    });
+    const row = (label, val, color) => `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--gray-100)"><span style="color:var(--gray-500)">${label}</span><span style="${color||''}">${fmtW(val)}</span></div>`;
+    pbox.innerHTML = `
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px">
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--gray-500);margin-bottom:4px">지급</div>
+          ${row('세전 월급 (지급총액)', ps.gross)}
+          <div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:700"><span>지급총액</span><span>${fmtW(ps.gross)}</span></div>
+        </div>
+        <div>
+          <div style="font-size:12px;font-weight:700;color:var(--gray-500);margin-bottom:4px">공제</div>
+          ${row('소득세', ps.incomeTaxM, 'color:var(--danger)')}
+          ${row('주민세 (지방소득세)', ps.localTaxM, 'color:var(--danger)')}
+          ${row('국민연금', ps.pensionM, 'color:var(--danger)')}
+          ${row('건강보험', ps.healthM, 'color:var(--danger)')}
+          ${row('장기요양보험', ps.ltcM, 'color:var(--danger)')}
+          ${row('고용보험', ps.employmentM, 'color:var(--danger)')}
+          <div style="display:flex;justify-content:space-between;padding:8px 0;font-weight:700"><span>공제총액</span><span style="color:var(--danger)">${fmtW(ps.deductM)}</span></div>
+        </div>
+      </div>
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--primary-light);border-radius:var(--radius);padding:12px 16px;margin-top:12px">
+        <span style="font-weight:700;color:var(--primary)">세후 월급 (실수령액)</span>
+        <span style="font-weight:700;font-size:18px;color:var(--primary)">${fmtW(ps.net)}</span>
+      </div>`;
+  }
 
   const earnedDed    = calcEarnedIncomeDeduction(salary);
   const earnedIncome = salary - earnedDed;
@@ -3263,6 +3369,24 @@ function saveTaxInputs() {
   });
   const btn = document.querySelector('[onclick="saveTaxInputs()"]');
   if (btn) { const orig = btn.textContent; btn.textContent = '✓ 저장됨'; setTimeout(() => { btn.textContent = orig; }, 1500); }
+}
+
+function showPayslipMethod() {
+  openModal('월급 명세 계산 방법', `
+    <div style="font-size:13px;line-height:1.8;color:var(--gray-700)">
+      <p style="margin:0 0 12px"><b>세전 월급 = 세전 연봉 ÷ 12</b> (두 칸은 자동 연동되며, 어느 쪽이든 직접 입력할 수 있습니다.)</p>
+      <p style="margin:0 0 6px;font-weight:700">공제 항목 (2025년 기준 요율)</p>
+      <ul style="margin:0 0 12px;padding-left:18px">
+        <li>국민연금 — 기준소득월액 × 4.5% (상한 6,170,000원)</li>
+        <li>건강보험 — 보수월액 × 3.545%</li>
+        <li>장기요양보험 — 건강보험료 × 12.95%</li>
+        <li>고용보험 — 보수월액 × 0.9%</li>
+        <li>소득세 — 연봉 기준 근로소득공제·인적공제·국민연금 공제 후 산출세액에서 근로소득세액공제를 차감해 연환산, ÷12</li>
+        <li>주민세 (지방소득세) — 소득세 × 10%</li>
+      </ul>
+      <p style="margin:0 0 12px"><b>세후 월급 (실수령액) = 지급총액 − 공제총액</b></p>
+      <p style="margin:0;font-size:12px;color:var(--gray-500)">※ 4대보험 실제 부과 기준(기준소득월액·보수월액)은 전년도 신고소득을 따르므로 추산값과 차이가 날 수 있습니다. 정확한 값은 4대보험/소득세 칸에 급여명세서 금액을 <b>직접 입력</b>하면 그 값이 우선 적용됩니다.</p>
+    </div>`);
 }
 
 
