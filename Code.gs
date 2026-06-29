@@ -52,8 +52,9 @@ function doGet(e) {
 // ── 진입점 ────────────────────────────────────────────────
 function doPost(e) {
   try {
-    Logger.log('받은 원문(raw): ' + (e && e.postData ? e.postData.contents : '(없음)'));
-    const payload = JSON.parse(e.postData.contents);
+    const raw = (e && e.postData ? e.postData.contents : '');
+    Logger.log('받은 원문(raw): ' + raw);
+    const payload = parsePayload(raw);
     Logger.log('source=' + payload.source + ' / secret=' + payload.secret + ' / action=' + payload.action);
 
     // 1) SMS 수신 경로 (source: 'sms') — SMS_SECRET 사용
@@ -101,6 +102,21 @@ function doPost(e) {
 
   } catch (err) {
     return respond({ success: false, message: err.message });
+  }
+}
+
+// ── 헬퍼: 본문 파싱 (SMS 줄바꿈으로 JSON이 깨져도 복구) ────
+function parsePayload(raw) {
+  try {
+    return JSON.parse(raw);
+  } catch (err) {
+    const obj = {};
+    const s   = raw.match(/"secret"\s*:\s*"([^"]*)"/);            if (s)   obj.secret     = s[1];
+    const src = raw.match(/"source"\s*:\s*"([^"]*)"/);            if (src) obj.source     = src[1];
+    const act = raw.match(/"action"\s*:\s*"([^"]*)"/);            if (act) obj.action     = act[1];
+    const r   = raw.match(/"receivedAt"\s*:\s*"([^"]*)"/);        if (r)   obj.receivedAt = r[1];
+    const b   = raw.match(/"body"\s*:\s*"([\s\S]*?)"\s*\}\s*$/);  if (b)   obj.body       = b[1];
+    return obj;
   }
 }
 
