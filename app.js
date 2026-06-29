@@ -458,6 +458,7 @@ function render(page) {
   if (page === 'vendors')      renderVendors(el);
   if (page === 'items')        renderItems(el);
   if (page === 'transactions') renderTransactions(el);
+  if (page === 'journal')      renderJournal(el);
   if (page === 'quotes')       renderQuotes(el);
   if (page === 'tax')          renderTaxPage(el);
   if (page === 'candidates')   renderCandidatesPage(el);
@@ -2965,6 +2966,187 @@ function parseNumNull(id) {
   return v ? parseInt(v) : null;
 }
 function numFmt(n) { return n ? Math.round(n).toLocaleString('ko-KR') : ''; }
+
+// ── 분개장 (복식부기 자동분개) ──────────────────────────────
+let journalFilter = { from: '', to: '', type: 'all' };
+
+function _settleAccount(method, type) {
+  switch (method) {
+    case '계좌이체': return '보통예금';
+    case '카드':     return type === '매출' ? '외상매출금' : '미지급금';
+    case '어음':     return type === '매출' ? '받을어음' : '지급어음';
+    case '현금':     return '현금';
+    default:         return '현금';
+  }
+}
+function _purchaseAccount(cat) {
+  switch (cat) {
+    case '매입(상품)':   return '상품';
+    case '매입(원재료)': return '원재료';
+    case '매입(경비)':   return '소모품비';
+    case '매입(기타)':   return '기타자산';
+    default:             return '매입';
+  }
+}
+// 거래내역 1건 → 차변/대변 복식부기 분개
+function txToJournal(t) {
+  const amount = t.items.reduce((s, i) => s + (i.amount || 0), 0);
+  const tax    = t.items.reduce((s, i) => s + (i.tax || 0), 0);
+  const total  = amount + tax;
+  const method = t.isPaid ? (t.paidMethod || t.paymentMethod || '현금') : t.paymentMethod;
+  const debit = [], credit = [];
+  if (t.type === '매출') {
+    debit.push({ account: t.isPaid ? _settleAccount(method, '매출') : '외상매출금', amount: total });
+    credit.push({ account: '매출', amount });
+    if (tax > 0) credit.push({ account: '부가세예수금', amount: tax });
+  } else {
+    debit.push({ account: _purchaseAccount(t.accountCategory), amount });
+    if (tax > 0) debit.push({ account: '부가세대급금', amount: tax });
+    credit.push({ account: t.isPaid ? _settleAccount(method, '매입') : '외상매입금', amount: total });
+  }
+  return { debit, credit, amount, tax, total };
+}
+
+function setJournalFilter(key, val) { journalFilter[key] = val; render('journal'); }
+
+function getJournalTxs() {
+  let txs = transactions.filter(t => t.date && t.items && t.items.length);
+  if (journalFilter.type !== 'all') txs = txs.filter(t => t.type === journalFilter.type);
+  if (journalFilter.from) txs = txs.filter(t => t.date >= journalFilter.from);
+  if (journalFilter.to)   txs = txs.filter(t => t.date <= journalFilter.to);
+  return [...txs].sort((a, b) => a.date.localeCompare(b.date));
+}
+
+function renderJournal(el) {
+  const txs = getJournalTxs();
+
+  let totalDebit = 0, totalCredit = 0;
+  const acct = {};
+  const addAcct = (name, side, v) => { (acct[name] = acct[name] || { d: 0, c: 0 })[side] += v; };
+
+  const bodyRows = txs.map(t => {
+    const v = vendors.find(x => x.id === t.vendorId);
+    const vname = v ? v.companyName : '-';
+    const j = txToJournal(t);
+    j.debit.forEach(d => { totalDebit += d.amount; addAcct(d.account, 'd', d.amount); });
+    j.credit.forEach(c => { totalCredit += c.amount; addAcct(c.account, 'c', c.amount); });
+    const n = Math.max(j.debit.length, j.credit.length);
+    let rows = '';
+    for (let i = 0; i < n; i++) {
+      const d = j.debit[i], c = j.credit[i];
+      rows += `<tr style="${i === 0 ? 'border-top:1px solid var(--gray-200)' : ''}">
+        <td style="white-space:nowrap;color:var(--gray-500)">${i === 0 ? t.date : ''}</td>
+        <td>${i === 0 ? `<span class="badge badge-${t.type === '매출' ? 'sales' : 'purchase'}">${t.type}</span> ${vname}` : ''}</td>
+        <td>${d ? d.account : ''}</td>
+        <td style="text-align:right">${d ? fmt(d.amount) : ''}</td>
+        <td>${c ? c.account : ''}</td>
+        <td style="text-align:right">${c ? fmt(c.amount) : ''}</td>
+      </tr>`;
+    }
+    return rows;
+  }).join('');
+
+  const balanced = totalDebit === totalCredit;
+  const acctRows = Object.keys(acct).sort().map(name => `<tr>
+    <td>${name}</td>
+    <td style="text-align:right">${acct[name].d ? fmt(acct[name].d) : '-'}</td>
+    <td style="text-align:right">${acct[name].c ? fmt(acct[name].c) : '-'}</td>
+  </tr>`).join('');
+
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">⚖️ 분개장 (복식부기)</div>
+        <div class="page-subtitle">거래 내역을 차변/대변 복식부기 분개로 자동 변환합니다</div>
+      </div>
+      <button class="btn btn-primary btn-sm" onclick="downloadJournalExcel()">⬇ 엑셀 다운로드</button>
+    </div>
+
+    <div class="filter-bar">
+      <select class="form-control" style="max-width:140px" onchange="setJournalFilter('type', this.value)">
+        <option value="all" ${journalFilter.type==='all'?'selected':''}>전체</option>
+        <option value="매출" ${journalFilter.type==='매출'?'selected':''}>매출만</option>
+        <option value="매입" ${journalFilter.type==='매입'?'selected':''}>매입만</option>
+      </select>
+      <input type="date" class="form-control" style="max-width:160px" value="${journalFilter.from}" onchange="setJournalFilter('from', this.value)">
+      <span style="color:var(--gray-400)">~</span>
+      <input type="date" class="form-control" style="max-width:160px" value="${journalFilter.to}" onchange="setJournalFilter('to', this.value)">
+      ${(journalFilter.from||journalFilter.to||journalFilter.type!=='all') ? `<button class="btn btn-ghost btn-sm" onclick="journalFilter={from:'',to:'',type:'all'};render('journal')">초기화</button>` : ''}
+    </div>
+
+    ${txs.length === 0 ? `<div class="empty-state"><div class="empty-icon">⚖️</div><div>표시할 거래가 없습니다. 거래 내역을 먼저 등록해주세요.</div></div>` : `
+    <div class="table-wrapper" style="margin-bottom:16px">
+      <table>
+        <thead><tr>
+          <th>날짜</th><th>적요</th>
+          <th>차변 계정</th><th style="text-align:right">차변 금액</th>
+          <th>대변 계정</th><th style="text-align:right">대변 금액</th>
+        </tr></thead>
+        <tbody>${bodyRows}</tbody>
+        <tfoot>
+          <tr style="background:var(--gray-50);border-top:2px solid var(--gray-300);font-weight:700">
+            <td colspan="2">합계</td>
+            <td></td><td style="text-align:right">${fmt(totalDebit)}</td>
+            <td></td><td style="text-align:right">${fmt(totalCredit)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:${balanced?'var(--success-light)':'var(--danger-light)'};border-radius:var(--radius);padding:12px 16px;margin-bottom:16px;font-weight:600;color:${balanced?'var(--success)':'var(--danger)'}">
+      ${balanced ? '✓ 차변 합계 = 대변 합계 (대차평형 일치)' : '⚠ 차변/대변 불일치 — 데이터를 확인하세요'} · 차변 ${fmt(totalDebit)}원 / 대변 ${fmt(totalCredit)}원
+    </div>
+
+    <div class="card">
+      <div class="card-title" style="margin-bottom:10px">계정과목별 합계 (합계시산표)</div>
+      <div class="table-wrapper">
+        <table>
+          <thead><tr><th>계정과목</th><th style="text-align:right">차변 합계</th><th style="text-align:right">대변 합계</th></tr></thead>
+          <tbody>${acctRows}</tbody>
+          <tfoot><tr style="background:var(--gray-50);font-weight:700">
+            <td>합계</td><td style="text-align:right">${fmt(totalDebit)}</td><td style="text-align:right">${fmt(totalCredit)}</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div>`}
+
+    <div style="font-size:12px;color:var(--gray-500);background:var(--gray-50);border-radius:var(--radius);padding:12px 16px;margin-top:16px;line-height:1.7">
+      💡 자동분개 기준 — 매출: (결제완료) 결제수단별 자산계정 / (미결제) 외상매출금 ÷ 대변 매출·부가세예수금. 매입: 차변 계정과목·부가세대급금 ÷ (결제완료) 결제수단별 / (미결제) 외상매입금. 실제 신고 시에는 세무사 검토가 필요합니다.
+    </div>`;
+}
+
+function downloadJournalExcel() {
+  if (!xlsxCheck()) return;
+  const txs = getJournalTxs();
+  if (!txs.length) { alert('다운로드할 거래가 없습니다.'); return; }
+
+  const header = ['날짜','적요','차변 계정','차변 금액','대변 계정','대변 금액'];
+  const rows = [];
+  let td = 0, tc = 0;
+  txs.forEach(t => {
+    const v = vendors.find(x => x.id === t.vendorId);
+    const vname = v ? v.companyName : '';
+    const j = txToJournal(t);
+    const n = Math.max(j.debit.length, j.credit.length);
+    for (let i = 0; i < n; i++) {
+      const d = j.debit[i], c = j.credit[i];
+      rows.push([
+        i === 0 ? t.date : '', i === 0 ? `${t.type} ${vname}` : '',
+        d ? d.account : '', d ? d.amount : '',
+        c ? c.account : '', c ? c.amount : '',
+      ]);
+      if (d) td += d.amount;
+      if (c) tc += c.amount;
+    }
+  });
+  rows.push(['합계', '', '', td, '', tc]);
+
+  const ws = XLSX.utils.aoa_to_sheet([[`■ 분개장 (${today()} 다운로드)`], [], header, ...rows]);
+  ws['!cols'] = [12, 24, 14, 14, 14, 14].map(w => ({ wch: w }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, '분개장');
+  xlsxSave(wb, '분개장');
+}
 
 let _taxAIText = '';
 
