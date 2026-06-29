@@ -2966,6 +2966,8 @@ function parseNumNull(id) {
 }
 function numFmt(n) { return n ? Math.round(n).toLocaleString('ko-KR') : ''; }
 
+let _taxAIText = '';
+
 function renderTaxPage(el) {
   const settings = loadTaxSettings();
   const salary0 = settings.salary || 52000000;
@@ -2983,7 +2985,10 @@ function renderTaxPage(el) {
         <div class="page-title">💰 세금 분석</div>
         <div class="page-subtitle">${new Date().getFullYear()}년 예상 세금 · 입력값 기준 실시간 추산</div>
       </div>
-      <button class="btn btn-primary btn-sm" onclick="saveTaxInputs()">💾 설정 저장</button>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-ghost btn-sm" onclick="exportTaxToAI()">🤖 AI 분석 요청</button>
+        <button class="btn btn-primary btn-sm" onclick="saveTaxInputs()">💾 설정 저장</button>
+      </div>
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
@@ -3351,6 +3356,43 @@ function recalcTax() {
     <div style="font-size:12px;color:var(--gray-500);background:var(--gray-50);border-radius:var(--radius);padding:12px 16px;line-height:1.7">
       ⚠ 추산값이며 실제 납부액은 세무사 신고 결과와 다를 수 있습니다. 중간예납, 성실신고 등 별도 사항은 반영되지 않습니다.
     </div>`;
+
+  // AI 분석 요청용 텍스트 생성
+  const psT = calcMonthlyPayslip(salary, {
+    pension: parseNumNull('ti-pension'), health: parseNumNull('ti-health'),
+    ltc: parseNumNull('ti-ltc'), employment: parseNumNull('ti-employment'), dependents,
+  });
+  const won = n => Math.round(n).toLocaleString('ko-KR') + '원';
+  const pctT = psT.gross > 0 ? (psT.deductM / psT.gross * 100).toFixed(1) : '0.0';
+  _taxAIText = [
+    `아래는 개인사업자(겸 근로소득자)의 ${year}년 세금 현황 추산 데이터입니다.`,
+    `세무 관점에서 검토해주세요.`,
+    ``,
+    `[근로소득 / 월급 명세]`,
+    `- 세전 연봉: ${won(salary)}`,
+    `- 세전 월급: ${won(psT.gross)}`,
+    `- 월 공제: 소득세 ${won(psT.incomeTaxM)}, 주민세 ${won(psT.localTaxM)}, 국민연금 ${won(psT.pensionM)}, 건강보험 ${won(psT.healthM)}, 장기요양 ${won(psT.ltcM)}, 고용보험 ${won(psT.employmentM)}`,
+    `- 월 공제총액: ${won(psT.deductM)} (공제율 ${pctT}%) / 세후 월급: ${won(psT.net)}`,
+    ``,
+    `[부가가치세 ${year}년]`,
+    ...vatData.map(b => `- ${b.name}: 상반기 ${won(b.h1.due)}, 하반기 ${won(b.h2.due)}, 연간 ${won(b.h1.due + b.h2.due)}`),
+    `- 전체 연간 합계: ${won(h1Total + h2Total)}`,
+    ``,
+    `[종합소득세 ${year}년]`,
+    `- 근로소득금액: ${won(earnedIncome)} (세전연봉 ${won(salary)} - 근로소득공제 ${won(earnedDed)})`,
+    `- 사업소득금액: ${won(bizIncome)} (매출 ${won(totalSales)} - 매입 ${won(totalPurchase)}${miscTotal > 0 ? ` - 기타경비 ${won(miscTotal)}` : ''})`,
+    `- 종합소득금액: ${won(totalIncome)}`,
+    `- 소득공제: 인적공제 ${won(dependentsDed)}(본인+부양 ${dependents}명), 4대보험 ${won(totalIns)}${cardDed > 0 ? `, 신용카드 ${won(cardDed)}` : ''}`,
+    `- 과세표준: ${won(taxableIncome)} (구간 ${TAX_BRACKETS[curIdx]?.range}, 세율 ${TAX_BRACKETS[curIdx]?.rate})`,
+    `- 산출세액: ${won(grossTax)}`,
+    `- 세액공제: 근로소득세액공제 ${won(earnedCredit)}${startupReduction ? `, 창업중소기업 50%감면 ${won(startupCredit)}` : ''}${pensionCredit > 0 ? `, 연금세액공제 ${won(pensionCredit)}` : ''}`,
+    `- 결정세액(소득세): ${won(finalTax)} + 지방소득세 ${won(localTax)} = ${won(totalTaxDue)}`,
+    withheld > 0 ? `- 기납부세액(원천징수): ${won(withheld)} → ${netDue >= 0 ? '추가납부 예상' : '환급 예상'} ${won(Math.abs(netDue))}` : `- 최종 납부 예상: ${won(totalTaxDue)}`,
+    miscTotal > 0 ? `- 기타 사업경비 ${won(miscTotal)} 반영 시 절세효과 약 ${won(taxSaving)}` : '',
+    `- 연금저축/IRP 납입: ${won(pensionSavings)} / ${won(irp)}`,
+    ``,
+    `위 데이터 기준으로 (1) 추가로 절세할 수 있는 방법, (2) 놓치고 있는 공제·감면, (3) 주의할 점을 구체적으로 알려주세요.`,
+  ].join('\n');
 }
 
 function saveTaxInputs() {
@@ -3374,6 +3416,49 @@ function saveTaxInputs() {
   });
   const btn = document.querySelector('[onclick="saveTaxInputs()"]');
   if (btn) { const orig = btn.textContent; btn.textContent = '✓ 저장됨'; setTimeout(() => { btn.textContent = orig; }, 1500); }
+}
+
+function exportTaxToAI() {
+  if (!_taxAIText) recalcTax();
+  const text = _taxAIText || '세금 분석 데이터가 없습니다.';
+  const esc = text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  openModal('🤖 AI에게 세금 분석 요청', `
+    <div style="display:flex;flex-direction:column;gap:12px">
+      <div style="font-size:12px;color:var(--gray-500);line-height:1.6">아래 내용을 복사해 ChatGPT·Gemini에 붙여넣으면 바로 분석해줍니다.<br>버튼을 누르면 <b>자동으로 복사</b>된 뒤 해당 사이트가 열립니다. (붙여넣기: Ctrl/⌘+V)</div>
+      <textarea id="ai-export-text" class="form-control" style="height:300px;font-size:12px;line-height:1.5;white-space:pre" readonly>${esc}</textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary btn-sm" onclick="copyTaxAIText(this)">📋 복사하기</button>
+        <button class="btn btn-success btn-sm" onclick="openAIChat('chatgpt', this)">💬 ChatGPT 열기</button>
+        <button class="btn btn-success btn-sm" onclick="openAIChat('gemini', this)">✨ Gemini 열기</button>
+      </div>
+    </div>`, true);
+}
+
+function _copyText(str) {
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    return navigator.clipboard.writeText(str).catch(() => _copyFallback(str));
+  }
+  return Promise.resolve(_copyFallback(str));
+}
+function _copyFallback(str) {
+  const t = document.getElementById('ai-export-text');
+  if (t) { t.focus(); t.select(); try { document.execCommand('copy'); } catch {} }
+}
+function copyTaxAIText(btn) {
+  const t = document.getElementById('ai-export-text');
+  _copyText(t ? t.value : _taxAIText).then(() => {
+    if (btn) { const o = btn.textContent; btn.textContent = '✓ 복사됨'; setTimeout(() => { btn.textContent = o; }, 1500); }
+  });
+}
+function openAIChat(which, btn) {
+  const t = document.getElementById('ai-export-text');
+  const text = t ? t.value : _taxAIText;
+  _copyText(text);
+  if (btn) { const o = btn.textContent; btn.textContent = '✓ 복사됨, 새 탭 열림'; setTimeout(() => { btn.textContent = o; }, 2000); }
+  const url = which === 'chatgpt'
+    ? 'https://chatgpt.com/?q=' + encodeURIComponent(text)
+    : 'https://gemini.google.com/app';
+  window.open(url, '_blank');
 }
 
 function showPayslipMethod() {
