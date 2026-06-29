@@ -3142,11 +3142,11 @@ function recalcTax() {
     const ps = calcMonthlyPayslip(salary, {
       pension: parseNumNull('ti-pension'), health: parseNumNull('ti-health'),
       ltc: parseNumNull('ti-ltc'), employment: parseNumNull('ti-employment'),
-      withheld, dependents,
+      dependents,
     });
     const row = (label, val, color) => `<div style="display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid var(--gray-100)"><span style="color:var(--gray-500)">${label}</span><span style="${color||''}">${fmtW(val)}</span></div>`;
     const deductRate = ps.gross > 0 ? (ps.deductM / ps.gross * 100).toFixed(1) : '0.0';
-    const taxHint = withheld > 0 ? '직접입력' : '자동추산 · 누진세율';
+    const taxHint = '자동추산 · 누진세율';
     pbox.innerHTML = `
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px">
         <div>
@@ -3169,7 +3169,7 @@ function recalcTax() {
         <span style="font-weight:700;color:var(--primary)">세후 월급 (실수령액)</span>
         <span style="font-weight:700;font-size:18px;color:var(--primary)">${fmtW(ps.net)}</span>
       </div>
-      <div style="font-size:11px;color:var(--gray-500);margin-top:8px">소득세는 연봉 환산 후 근로소득공제·인적공제·국민연금공제를 반영한 누진세율(6~45%)로 추산합니다. 명세서 실제 소득세는 위 '원천징수 소득세(연간)' 칸에 입력하면 그대로 반영됩니다.</div>`;
+      <div style="font-size:11px;color:var(--gray-500);margin-top:8px">소득세는 입력한 연봉 기준으로 근로소득공제·인적공제·국민연금공제를 반영한 누진세율(6~45%)로 자동 추산하며, 연봉을 바꾸면 함께 변합니다. 4대보험은 위 칸에 직접 입력하면 그 값이 우선 적용됩니다. (위 '원천징수 소득세(연간)' 칸은 연말정산 기납부세액용으로, 월급 명세에는 영향을 주지 않습니다.)</div>`;
   }
 
   const earnedDed    = calcEarnedIncomeDeduction(salary);
