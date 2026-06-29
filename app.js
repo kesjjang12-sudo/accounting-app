@@ -252,7 +252,6 @@ function switchBusiness(id) {
   companyInfo  = DB.load('acc_company', '{}');
   quotes       = DB.load('acc_quotes');
   renderSidebarBiz();
-  renderTaxWidget();
   render(currentPage);
   const mc = document.querySelector('.main-content');
   if (mc) mc.scrollTop = 0;
@@ -1503,11 +1502,11 @@ function saveCompanyInfoFromModal() {
 // ── VENDORS PAGE ──────────────────────────────────────────
 let vendorSearch = '';
 
-function renderVendors(el) {
+function vendorRowsHtml() {
   const filtered = vendors.filter(v =>
     v.companyName.includes(vendorSearch) || (v.businessNumber||'').includes(vendorSearch) || (v.representative||'').includes(vendorSearch)
   );
-  const rows = filtered.map(v => `<tr>
+  return filtered.map(v => `<tr>
     <td style="text-align:center;width:36px"><input type="checkbox" class="sel-cb tx-checkbox" data-page="vendors" value="${v.id}" ${_sel.vendors.has(v.id)?'checked':''} onchange="toggleSel('vendors','${v.id}')"></td>
     <td>${v.companyName}</td><td>${v.representative||'-'}</td><td>${v.businessNumber||'-'}</td>
     <td>${v.address||'-'}</td><td>${v.email||'-'}</td>
@@ -1517,6 +1516,10 @@ function renderVendors(el) {
       <button class="btn btn-danger btn-sm" onclick="deleteVendor('${v.id}')">삭제</button>
     </div></td>
   </tr>`).join('') || `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🏢</div><p>등록된 거래처가 없습니다</p></div></td></tr>`;
+}
+
+function renderVendors(el) {
+  const rows = vendorRowsHtml();
 
   el.innerHTML = `
     <div class="page-header">
@@ -1537,10 +1540,15 @@ function renderVendors(el) {
         <th style="width:36px;text-align:center"><input type="checkbox" id="sel-all-vendors" class="tx-checkbox" onchange="selAll('vendors',this)"></th>
         <th>상호명</th><th>대표자</th><th>사업자번호</th><th>주소</th><th>이메일</th><th>구분</th><th>관리</th>
       </tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody id="vendors-tbody">${rows}</tbody>
     </table></div>`;
 
-  el.querySelector('#vendor-search').addEventListener('input', debounce(e => { const p = e.target.selectionStart; vendorSearch = e.target.value; renderVendors(el); refocusSearch(el, '#vendor-search', p); }, 300));
+  el.querySelector('#vendor-search').addEventListener('input', debounce(e => {
+    vendorSearch = e.target.value;
+    const tb = el.querySelector('#vendors-tbody');
+    if (tb) tb.innerHTML = vendorRowsHtml();
+    _updateSelUI('vendors');
+  }, 250));
   _updateSelUI('vendors');
 }
 
@@ -1591,9 +1599,9 @@ function deleteVendor(id) {
 // ── ITEMS PAGE ────────────────────────────────────────────
 let itemSearch = '';
 
-function renderItems(el) {
+function itemRowsHtml() {
   const filtered = items.filter(i => i.name.includes(itemSearch) || (i.code||'').includes(itemSearch) || (i.spec||'').includes(itemSearch));
-  const rows = filtered.map(i => {
+  return filtered.map(i => {
     const pv = vendors.find(v => v.id === i.purchaseVendorId);
     const sv = vendors.find(v => v.id === i.salesVendorId);
     return `<tr>
@@ -1612,6 +1620,10 @@ function renderItems(el) {
       </div></td>
     </tr>`;
   }).join('') || `<tr><td colspan="10"><div class="empty-state"><div class="empty-icon">📦</div><p>등록된 품목이 없습니다</p></div></td></tr>`;
+}
+
+function renderItems(el) {
+  const rows = itemRowsHtml();
 
   el.innerHTML = `
     <div class="page-header">
@@ -1632,10 +1644,15 @@ function renderItems(el) {
         <th style="width:36px;text-align:center"><input type="checkbox" id="sel-all-items" class="tx-checkbox" onchange="selAll('items',this)"></th>
         <th>코드</th><th>품목명/규격</th><th>단위</th><th style="text-align:right">매입단가</th><th>매입거래처</th><th style="text-align:right">매출단가</th><th>매출거래처</th><th>세금</th><th>관리</th>
       </tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody id="items-tbody">${rows}</tbody>
     </table></div>`;
 
-  el.querySelector('#item-search').addEventListener('input', debounce(e => { const p = e.target.selectionStart; itemSearch = e.target.value; renderItems(el); refocusSearch(el, '#item-search', p); }, 300));
+  el.querySelector('#item-search').addEventListener('input', debounce(e => {
+    itemSearch = e.target.value;
+    const tb = el.querySelector('#items-tbody');
+    if (tb) tb.innerHTML = itemRowsHtml();
+    _updateSelUI('items');
+  }, 250));
   _updateSelUI('items');
 }
 
@@ -1691,7 +1708,7 @@ function deleteItem(id) {
 let txFilter = { type: '', vendorId: '', dateFrom: '', dateTo: '', paid: '' };
 let txSearch  = '';
 
-function renderTransactions(el) {
+function txFilteredList() {
   let filtered = [...transactions].sort((a,b) => b.date.localeCompare(a.date));
   if (txFilter.type)     filtered = filtered.filter(t => t.type === txFilter.type);
   if (txFilter.vendorId) filtered = filtered.filter(t => t.vendorId === txFilter.vendorId);
@@ -1703,9 +1720,12 @@ function renderTransactions(el) {
     const v = vendors.find(v => v.id === t.vendorId);
     return (v?v.companyName:'').includes(txSearch) || t.items.some(i => i.itemName.includes(txSearch));
   });
+  return filtered;
+}
 
+function txRowsHtml(filtered) {
   const todayMs = new Date().setHours(0,0,0,0);
-  const rows = filtered.map(t => {
+  return filtered.map(t => {
     const v   = vendors.find(v => v.id === t.vendorId);
     const amt = t.items.reduce((s,i) => s+i.amount, 0);
     const tax = t.items.reduce((s,i) => s+i.tax, 0);
@@ -1752,12 +1772,16 @@ function renderTransactions(el) {
       </div></td>
     </tr>`;
   }).join('') || `<tr><td colspan="11"><div class="empty-state"><div class="empty-icon">📝</div><p>거래 내역이 없습니다</p></div></td></tr>`;
+}
 
+function renderTransactions(el) {
+  const filtered = txFilteredList();
+  const rows = txRowsHtml(filtered);
   const vOpts = vendors.map(v => `<option value="${v.id}" ${txFilter.vendorId===v.id?'selected':''}>${v.companyName}</option>`).join('');
 
   el.innerHTML = `
     <div class="page-header">
-      <div><div class="page-title">거래 내역</div><div class="page-subtitle">전체 ${transactions.length}건 (표시 ${filtered.length}건)</div></div>
+      <div><div class="page-title">거래 내역</div><div class="page-subtitle">전체 ${transactions.length}건 (표시 <span id="tx-count">${filtered.length}</span>건)</div></div>
       <div style="display:flex;gap:8px">
         <label class="btn btn-ghost" style="cursor:pointer">
           📂 엑셀 업로드
@@ -1786,10 +1810,18 @@ function renderTransactions(el) {
         <th style="width:36px;text-align:center"><input type="checkbox" id="sel-all-txRows" class="tx-checkbox" onchange="selAll('txRows',this)"></th>
         <th>날짜</th><th>구분</th><th>거래처</th><th>적요</th><th>결제방법</th><th style="text-align:right">공급가액</th><th style="text-align:right">세액</th><th style="text-align:right">합계</th><th>결제상태</th><th>관리</th>
       </tr></thead>
-      <tbody>${rows}</tbody>
+      <tbody id="tx-tbody">${rows}</tbody>
     </table></div>`;
 
-  el.querySelector('#tx-search').addEventListener('input', debounce(e => { const p = e.target.selectionStart; txSearch = e.target.value; renderTransactions(el); refocusSearch(el, '#tx-search', p); }, 300));
+  el.querySelector('#tx-search').addEventListener('input', debounce(e => {
+    txSearch = e.target.value;
+    const list = txFilteredList();
+    const tb = el.querySelector('#tx-tbody');
+    if (tb) tb.innerHTML = txRowsHtml(list);
+    const cnt = el.querySelector('#tx-count');
+    if (cnt) cnt.textContent = list.length;
+    _updateSelUI('txRows');
+  }, 250));
   el.querySelector('#tx-type').addEventListener('change',   e => { txFilter.type = e.target.value;        renderTransactions(el); });
   el.querySelector('#tx-vendor').addEventListener('change', e => { txFilter.vendorId = e.target.value;    renderTransactions(el); });
   el.querySelector('#tx-paid').addEventListener('change',   e => { txFilter.paid = e.target.value;        renderTransactions(el); });
