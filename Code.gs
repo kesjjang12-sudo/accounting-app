@@ -220,7 +220,7 @@ function handleSms(payload) {
   for (let i = 1; i < rows.length; i++) {
     if (rows[i][0] === id) return respond({ success: true, status: 'duplicate' });
   }
-  sheet.appendRow([
+  appendCandidateRow(sheet, [
     id, parsed.date, parsed.merchant, parsed.amount, cardType,
     'pending', suggestCategory(parsed.merchant), receivedAt, body
   ]);
@@ -231,10 +231,17 @@ function appendCandidate(body, receivedAt, cardType, status) {
   const parsed = parseSmsBody(body, receivedAt);
   const id     = [parsed.date, parsed.merchant, parsed.amount].join('|');
   const sheet  = getOrCreateSheet('expense_candidates', CANDIDATE_HEADERS);
-  sheet.appendRow([
+  appendCandidateRow(sheet, [
     id, parsed.date, parsed.merchant, parsed.amount, cardType,
     status, suggestCategory(parsed.merchant), receivedAt, body
   ]);
+}
+
+// 후보 행 추가 — 날짜 칸(2열)을 텍스트로 고정해 시트의 자동 날짜변환(시각 손실) 방지
+function appendCandidateRow(sheet, row) {
+  sheet.appendRow(row);
+  const r = sheet.getLastRow();
+  sheet.getRange(r, 2).setNumberFormat('@').setValue(String(row[1]));
 }
 
 function getCandidates() {
