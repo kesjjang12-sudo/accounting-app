@@ -81,13 +81,30 @@ function doPost(e) {
       if (!payload.data || typeof payload.data !== 'object') {
         return respond({ success: false, message: 'data 필드가 없거나 잘못된 형식입니다.' });
       }
+      const mode = payload.snapshot || 'auto';   // 'auto' | 'force' | 'none'
+      if (mode === 'auto') maybeAutoSnapshot();   // 덮어쓰기 전 상태를 10분 간격으로 보관
       saveStorage(payload.data);
+      if (mode === 'force') createSnapshot();      // 수동: 방금 저장한 현재 상태 보관
       return respond({ success: true, count: Object.keys(payload.data).length });
     }
 
     if (payload.action === 'restoreStorage') {
       const data = loadStorage();
       return respond({ success: true, data });
+    }
+
+    if (payload.action === 'createSnapshot') {
+      return respond({ success: true, snapshot: createSnapshot() });
+    }
+
+    if (payload.action === 'listSnapshots') {
+      return respond({ success: true, snapshots: listSnapshots() });
+    }
+
+    if (payload.action === 'restoreSnapshot') {
+      const snapData = restoreSnapshot(payload.id);
+      if (!snapData) return respond({ success: false, message: '스냅샷을 찾을 수 없습니다: ' + payload.id });
+      return respond({ success: true, data: snapData });
     }
 
     // 사업비 후보 API
@@ -140,44 +157,127 @@ function getStorageSheet() {
   return sheet;
 }
 
-// ── 저장: localStorage 데이터 → storage 시트 ──────────────
+// 구글시트 셀 1칸 최대 5만 자 → 안전하게 45,000자 단위로 청크 분할
+var MAX_CELL = 45000;
+
+// ── 저장: localStorage 데이터 → storage 시트 (큰 값 자동 청크 분할) ──
 function saveStorage(data) {
-  const sheet   = getStorageSheet();
-  const now     = new Date().toISOString();
-  const lastRow = sheet.getLastRow();
+  writeKvSheet(getStorageSheet(), data);
+}
 
-  // 기존 key → 행 번호 매핑
-  const existing = {};
-  if (lastRow > 1) {
-    const values = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
-    values.forEach((row, i) => {
-      if (row[0]) existing[row[0]] = i + 2;
-    });
-  }
+// ── 불러오기: storage 시트 → key/value 객체 (청크 재조립) ──
+function loadStorage() {
+  return readKvSheet(getStorageSheet());
+}
 
-  Object.entries(data).forEach(([key, value]) => {
-    if (existing[key]) {
-      // 기존 행 업데이트
-      sheet.getRange(existing[key], 1, 1, 3).setValues([[key, value, now]]);
+// key/value(+청크)를 시트에 통째로 다시 기록 (전체 스냅샷이 매번 전송되므로 clear & rewrite)
+function writeKvSheet(sheet, data) {
+  const now  = new Date().toISOString();
+  const rows = [];
+  Object.keys(data).forEach(function (key) {
+    var value = data[key];
+    value = (value == null) ? '' : String(value);
+    if (value.length <= MAX_CELL) {
+      rows.push([key, value, now]);
     } else {
-      // 새 행 추가
-      sheet.appendRow([key, value, now]);
+      var n = Math.ceil(value.length / MAX_CELL);
+      rows.push([key, '__CHUNKED__:' + n, now]);          // 마커 행
+      for (var i = 0; i < n; i++) {
+        rows.push([key + '::c' + i, value.substr(i * MAX_CELL, MAX_CELL), now]);
+      }
     }
+  });
+  var lastRow = sheet.getLastRow();
+  if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, 3).clearContent();
+  if (rows.length) sheet.getRange(2, 1, rows.length, 3).setValues(rows);
+}
+
+// 시트 → key/value 객체 (청크 재조립)
+function readKvSheet(sheet) {
+  const lastRow = sheet.getLastRow();
+  if (lastRow <= 1) return {};
+  const values = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
+  const map = {};
+  values.forEach(function (row) { if (row[0]) map[row[0]] = row[1]; });
+
+  const result = {};
+  Object.keys(map).forEach(function (key) {
+    if (key.indexOf('::c') > -1) return;                  // 청크 조각은 출력에서 제외
+    var v = map[key];
+    if (typeof v === 'string' && v.indexOf('__CHUNKED__:') === 0) {
+      var n = parseInt(v.split(':')[1], 10) || 0;
+      var joined = '';
+      for (var i = 0; i < n; i++) joined += (map[key + '::c' + i] || '');
+      result[key] = joined;
+    } else {
+      result[key] = v;
+    }
+  });
+  return result;
+}
+
+// ══════════════════════════════════════════════════════════
+// ── 스냅샷 (롤백용) — storage 시트를 복제해 최근 10개 보관 ──
+// ══════════════════════════════════════════════════════════
+var SNAP_PREFIX      = 'snap_';
+var SNAP_KEEP        = 10;
+var SNAP_INTERVAL_MS = 10 * 60 * 1000;   // 자동 스냅샷 최소 간격 10분
+
+function snapshotSheets() {
+  return SpreadsheetApp.getActiveSpreadsheet().getSheets().filter(function (s) {
+    return s.getName().indexOf(SNAP_PREFIX) === 0;
+  });
+}
+function snapEpoch(name) { return parseInt(name.substring(SNAP_PREFIX.length), 10) || 0; }
+function snapsByNewest() {
+  return snapshotSheets().sort(function (a, b) { return snapEpoch(b.getName()) - snapEpoch(a.getName()); });
+}
+
+// 현재 storage 상태를 스냅샷으로 복제 (빈 상태는 건너뜀)
+function createSnapshot() {
+  const ss      = SpreadsheetApp.getActiveSpreadsheet();
+  const storage = getStorageSheet();
+  if (storage.getLastRow() <= 1) return '';
+  const name = SNAP_PREFIX + Date.now();
+  storage.copyTo(ss).setName(name);
+  rotateSnapshots();
+  return name;
+}
+
+// 직전 스냅샷이 10분 이상 지났을 때만 생성 (초 단위 중복 방지)
+function maybeAutoSnapshot() {
+  const snaps  = snapsByNewest();
+  const newest = snaps.length ? snapEpoch(snaps[0].getName()) : 0;
+  if (Date.now() - newest >= SNAP_INTERVAL_MS) createSnapshot();
+}
+
+// 최근 SNAP_KEEP개만 남기고 오래된 스냅샷 삭제
+function rotateSnapshots() {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  const snaps = snapsByNewest();
+  for (var i = SNAP_KEEP; i < snaps.length; i++) ss.deleteSheet(snaps[i]);
+}
+
+function listSnapshots() {
+  return snapsByNewest().map(function (sheet) {
+    var epoch = snapEpoch(sheet.getName());
+    var txCount = 0;
+    try {
+      var data = readKvSheet(sheet);
+      Object.keys(data).forEach(function (k) {
+        if (k.indexOf('acc_transactions') === 0) {
+          try { txCount += (JSON.parse(data[k]) || []).length; } catch (e) {}
+        }
+      });
+    } catch (e) {}
+    return { id: sheet.getName(), epoch: epoch, time: new Date(epoch).toISOString(), txCount: txCount };
   });
 }
 
-// ── 불러오기: storage 시트 → key/value 객체 반환 ──────────
-function loadStorage() {
-  const sheet   = getStorageSheet();
-  const lastRow = sheet.getLastRow();
-  if (lastRow <= 1) return {};
-
-  const values = sheet.getRange(2, 1, lastRow - 1, 2).getValues();
-  const result = {};
-  values.forEach(row => {
-    if (row[0]) result[row[0]] = row[1];
-  });
-  return result;
+function restoreSnapshot(id) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(id);
+  if (!sheet) return null;
+  return readKvSheet(sheet);
 }
 
 // ══════════════════════════════════════════════════════════
