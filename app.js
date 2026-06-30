@@ -618,6 +618,7 @@ function renderHome(el) {
         <div class="page-subtitle">전체 누적 현황 · 월별 손익 보고서</div>
       </div>
       <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        <a class="btn btn-ghost btn-sm" href="office.html" style="text-decoration:none">🏢 AI 사무실</a>
         <button id="snapshot-btn" class="btn btn-ghost btn-sm" onclick="snapshotNow()">🛟 안전저장</button>
         <button class="btn btn-ghost btn-sm" onclick="openSnapshotsModal()">↩ 되돌리기</button>
         <button id="sheets-restore-btn" class="btn btn-ghost btn-sm" onclick="restoreFromSheets()">☁ 시트복원</button>

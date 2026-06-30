@@ -107,6 +107,11 @@ function doPost(e) {
       return respond({ success: true, data: snapData });
     }
 
+    // AI 사무실: Claude 호출 중계
+    if (payload.action === 'askClaude') {
+      return respond(askClaude(payload));
+    }
+
     // 사업비 후보 API
     if (payload.action === 'getExpenseCandidates') {
       return respond({ success: true, candidates: getCandidates() });
@@ -278,6 +283,60 @@ function restoreSnapshot(id) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(id);
   if (!sheet) return null;
   return readKvSheet(sheet);
+}
+
+// ══════════════════════════════════════════════════════════
+// ── AI 사무실: Claude(Anthropic) API 호출 중계 ────────────
+// ══════════════════════════════════════════════════════════
+// ⚠ Apps Script [프로젝트 설정 → 스크립트 속성]에 CLAUDE_API_KEY 추가 필요
+function askClaude(payload) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('CLAUDE_API_KEY');
+  if (!apiKey) return { success: false, message: 'CLAUDE_API_KEY가 설정되지 않았습니다. Apps Script 스크립트 속성에 추가하세요.' };
+
+  const model    = payload.model || 'claude-sonnet-4-6';
+  const maxTok   = payload.maxTokens || 1500;
+  const system   = payload.system || '';
+  const messages = Array.isArray(payload.messages) ? payload.messages : [];
+  if (!messages.length) return { success: false, message: 'messages가 비어있습니다.' };
+
+  const body = { model: model, max_tokens: maxTok, messages: messages };
+  if (system) body.system = system;
+
+  try {
+    const res = UrlFetchApp.fetch('https://api.anthropic.com/v1/messages', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: { 'x-api-key': apiKey, 'anthropic-version': '2023-06-01' },
+      payload: JSON.stringify(body),
+      muteHttpExceptions: true
+    });
+    const code = res.getResponseCode();
+    const json = JSON.parse(res.getContentText());
+    if (code !== 200) {
+      return { success: false, message: (json.error && json.error.message) || ('HTTP ' + code) };
+    }
+    const text = (json.content || []).map(function (c) { return c.text || ''; }).join('\n').trim();
+    logAiOffice(payload.employee || '', system, messages, text, json.usage);
+    return { success: true, text: text, usage: json.usage || null };
+  } catch (err) {
+    return { success: false, message: err.message };
+  }
+}
+
+// AI 사무실 로그 시트에 기록 (영구 보관)
+function logAiOffice(employee, system, messages, response, usage) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    let sheet = ss.getSheetByName('ai_office_log');
+    if (!sheet) {
+      sheet = ss.insertSheet('ai_office_log');
+      sheet.getRange('A1:E1').setValues([['time', 'employee', 'prompt', 'response', 'tokens']]);
+      sheet.setFrozenRows(1);
+    }
+    const lastMsg = messages.length ? messages[messages.length - 1].content : '';
+    const tok = usage ? ((usage.input_tokens || 0) + (usage.output_tokens || 0)) : '';
+    sheet.appendRow([new Date().toISOString(), employee, String(lastMsg).slice(0, 5000), String(response).slice(0, 5000), tok]);
+  } catch (e) {}
 }
 
 // ══════════════════════════════════════════════════════════
