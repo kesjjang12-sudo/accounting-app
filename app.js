@@ -4687,6 +4687,7 @@ function openHometaxGuide() {
 
 // ── 테이블 다중 정렬 ──────────────────────────────────────
 const _sorts = {};
+let _sortObs = null;
 
 function _parseSortVal(text) {
   const s = (text || '').replace(/,/g, '').replace(/원/g, '').trim();
@@ -4712,8 +4713,12 @@ function applyTableSort(table) {
     }
     return 0;
   });
-  rows.forEach(r => tbody.appendChild(r));
+  _sortObs?.disconnect();
+  const frag = document.createDocumentFragment();
+  rows.forEach(r => frag.appendChild(r));
+  tbody.appendChild(frag);
   _renderSortBadges(table);
+  _sortObs?.observe(document.querySelector('.main-content'), { subtree: true, childList: true });
 }
 
 function _renderSortBadges(table) {
@@ -4761,11 +4766,12 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   // 페이지 재렌더 후 기존 정렬 자동 재적용
-  new MutationObserver(() => {
+  _sortObs = new MutationObserver(() => {
     document.querySelectorAll('table[data-sort-id]').forEach(t => {
       if (_sorts[t.dataset.sortId]?.length) applyTableSort(t);
     });
-  }).observe(document.querySelector('.main-content'), { subtree: true, childList: true });
+  });
+  _sortObs.observe(document.querySelector('.main-content'), { subtree: true, childList: true });
 
   renderSidebarBiz();
   render('home');
