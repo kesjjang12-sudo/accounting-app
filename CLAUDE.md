@@ -124,3 +124,10 @@ doBulkEditTx()
 ## GitHub
 - Repo: https://github.com/kesjjang12-sudo/accounting-app
 - Branch: main
+
+## 배포 워크플로 (필수)
+작업 완료 후 배포 순서:
+1. `git push origin main:main-backup` — main 백업 (기존 main-backup 브랜치 덮어쓰기)
+2. `git push origin HEAD:main` — main에 직접 반영 → GitHub Pages 자동 배포
+
+PR 생성 금지. 브랜치에서 직접 main으로 올린다.
