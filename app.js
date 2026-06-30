@@ -4543,9 +4543,36 @@ function htVendorCard(vKey, g) {
   const detailRows = txs.map(t => {
     const ts = t.items.reduce((s,i)=>s+(i.amount||0),0);
     const tt = t.items.reduce((s,i)=>s+(i.tax||0),0);
-    return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--gray-100);font-size:12px">
-      <span style="color:var(--gray-500)">${t.date}</span>
-      <span>공급가액 <b>${fmt(ts)}</b> / 세액 ${fmt(tt)}</span>
+    const itemRows = t.items.map((i, n) => `<tr>
+      <td style="padding:3px 8px;font-size:12px;color:var(--gray-400)">${n+1}</td>
+      <td style="padding:3px 8px;font-size:12px">${i.itemName||''}</td>
+      <td style="padding:3px 8px;font-size:12px">${i.unit||''}</td>
+      <td style="padding:3px 8px;font-size:12px;text-align:right">${i.quantity != null ? fmt(i.quantity) : ''}</td>
+      <td style="padding:3px 8px;font-size:12px;text-align:right">${i.unitPrice ? fmt(i.unitPrice) : ''}</td>
+      <td style="padding:3px 8px;font-size:12px;text-align:right;font-weight:600">${fmt(i.amount||0)}</td>
+      <td style="padding:3px 8px;font-size:12px;text-align:right">${fmt(i.tax||0)}</td>
+    </tr>`).join('');
+    return `<div style="border-bottom:1px solid var(--gray-100);padding:8px 0">
+      <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">${t.date}</div>
+      <div class="table-wrapper" style="margin:0">
+        <table>
+          <thead><tr style="background:var(--gray-50)">
+            <th style="width:28px;font-size:11px">No</th>
+            <th style="font-size:11px">품목명</th>
+            <th style="font-size:11px">단위</th>
+            <th style="text-align:right;font-size:11px">수량</th>
+            <th style="text-align:right;font-size:11px">단가</th>
+            <th style="text-align:right;font-size:11px">공급가액</th>
+            <th style="text-align:right;font-size:11px">세액</th>
+          </tr></thead>
+          <tbody>${itemRows}</tbody>
+          <tfoot><tr style="background:var(--gray-50);font-weight:700">
+            <td colspan="5" style="padding:3px 8px;font-size:11px">소계</td>
+            <td style="padding:3px 8px;font-size:11px;text-align:right">${fmt(ts)}</td>
+            <td style="padding:3px 8px;font-size:11px;text-align:right">${fmt(tt)}</td>
+          </tr></tfoot>
+        </table>
+      </div>
     </div>`;
   }).join('');
 
