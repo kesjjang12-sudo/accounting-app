@@ -584,6 +584,7 @@ function render(page) {
   if (page === 'quotes')       renderQuotes(el);
   if (page === 'tax')          renderTaxPage(el);
   if (page === 'candidates')   renderCandidatesPage(el);
+  if (page === 'hometax')      renderHometax(el);
 }
 
 // ── Modal ─────────────────────────────────────────────────
@@ -3127,6 +3128,7 @@ function numFmt(n) { return n ? Math.round(n).toLocaleString('ko-KR') : ''; }
 
 // ── 분개장 (복식부기 자동분개) ──────────────────────────────
 let journalFilter = { from: '', to: '', type: 'all' };
+let _htFilter     = { from: '', to: '', q: '', showAll: false };
 
 function _settleAccount(method, type) {
   switch (method) {
@@ -4373,6 +4375,196 @@ function doAddManualCandidate() {
   renderCandidatesPage(document.getElementById('page-candidates'));
 }
 
+
+// ── 홈택스 수기 도우미 ────────────────────────────────────
+function renderHometax(el) {
+  const f = _htFilter;
+  const allEligible = transactions.filter(t => {
+    if (t.type !== '매출') return false;
+    const v = vendors.find(v => v.id === t.vendorId);
+    return v && v.businessNumber;
+  });
+  const issuedCount  = allEligible.filter(t => t.taxInvoiceIssued).length;
+  const pendingCount = allEligible.length - issuedCount;
+
+  const txs = allEligible.filter(t => {
+    const v = vendors.find(v => v.id === t.vendorId) || {};
+    if (f.from && t.date < f.from) return false;
+    if (f.to   && t.date > f.to)   return false;
+    if (f.q) {
+      const qq = f.q.toLowerCase();
+      if (!(v.companyName||'').toLowerCase().includes(qq) && !(v.businessNumber||'').includes(qq)) return false;
+    }
+    if (!f.showAll && t.taxInvoiceIssued) return false;
+    return true;
+  }).sort((a, b) => b.date.localeCompare(a.date));
+
+  const qEsc = (f.q || '').replace(/"/g, '&quot;');
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">🧾 홈택스 수기 도우미</div>
+        <div class="page-subtitle">전자세금계산서를 홈택스에서 직접 발행할 때 필요한 정보를 정리해드려요</div>
+      </div>
+      <button class="btn btn-ghost btn-sm" onclick="openHometaxGuide()">📋 발행 가이드</button>
+    </div>
+    <div class="filter-bar" style="margin-bottom:14px">
+      <input type="date" class="form-control" value="${f.from}" style="width:140px"
+        onchange="_htFilter.from=this.value;renderHometax(document.getElementById('page-hometax'))">
+      <span style="color:var(--gray-400)">~</span>
+      <input type="date" class="form-control" value="${f.to}" style="width:140px"
+        onchange="_htFilter.to=this.value;renderHometax(document.getElementById('page-hometax'))">
+      <input type="text" class="form-control search-input" value="${qEsc}" placeholder="거래처명 / 사업자번호 검색" style="width:200px"
+        oninput="_htFilter.q=this.value;renderHometax(document.getElementById('page-hometax'))">
+      <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap">
+        <input type="checkbox" ${f.showAll ? 'checked' : ''}
+          onchange="_htFilter.showAll=this.checked;renderHometax(document.getElementById('page-hometax'))"> 발행완료 포함
+      </label>
+      ${(f.from||f.to||f.q) ? `<button class="btn btn-ghost btn-sm" onclick="_htFilter={from:'',to:'',q:'',showAll:_htFilter.showAll};renderHometax(document.getElementById('page-hometax'))">초기화</button>` : ''}
+      <span style="margin-left:auto;font-size:13px;color:var(--gray-500);white-space:nowrap">
+        전체 ${allEligible.length}건 · 미발행 ${pendingCount} · 완료 ${issuedCount}
+      </span>
+    </div>
+    ${!allEligible.length
+      ? `<div class="empty-state"><div class="empty-icon">🧾</div><div>세금계산서 발행 대상 거래가 없어요<br><small style="color:var(--gray-400)">매출 거래에 사업자번호가 있는 거래처를 연결하면 여기에 표시됩니다</small></div></div>`
+      : !txs.length
+        ? `<div class="empty-state"><div class="empty-icon">✓</div><div>${f.showAll ? '조건에 맞는 거래가 없습니다' : '미발행 거래가 없습니다'}<br><small style="color:var(--gray-400)">${f.showAll ? '' : '"발행완료 포함"을 체크하면 모두 볼 수 있어요'}</small></div></div>`
+        : `<div>${txs.map(t => htCard(t)).join('')}</div>`
+    }`;
+}
+
+function htCard(t) {
+  const v      = vendors.find(v => v.id === t.vendorId) || {};
+  const supply = t.items.reduce((s, i) => s + (i.amount || 0), 0);
+  const tax    = t.items.reduce((s, i) => s + (i.tax    || 0), 0);
+  const total  = supply + tax;
+  const issued = !!t.taxInvoiceIssued;
+  const bno    = (v.businessNumber || '').replace(/[^0-9]/g, '');
+  const bnoFmt = bno.length === 10 ? `${bno.slice(0,3)}-${bno.slice(3,5)}-${bno.slice(5)}` : (v.businessNumber || '');
+
+  const itemRows = t.items.map((i, n) => `<tr>
+    <td style="padding:4px 8px;font-size:12px;color:var(--gray-500)">${n+1}</td>
+    <td style="padding:4px 8px;font-size:12px">${i.itemName||''}</td>
+    <td style="padding:4px 8px;font-size:12px">${i.unit||''}</td>
+    <td style="padding:4px 8px;font-size:12px;text-align:right">${i.quantity != null ? fmt(i.quantity) : ''}</td>
+    <td style="padding:4px 8px;font-size:12px;text-align:right">${i.unitPrice ? fmt(i.unitPrice) : ''}</td>
+    <td style="padding:4px 8px;font-size:12px;text-align:right;font-weight:600">${fmt(i.amount||0)}</td>
+    <td style="padding:4px 8px;font-size:12px;text-align:right">${fmt(i.tax||0)}</td>
+  </tr>`).join('');
+
+  return `<div class="card" style="margin-bottom:14px${issued ? ';opacity:0.55' : ''}">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:14px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:16px;font-weight:700">${v.companyName||'(거래처 없음)'}</span>
+        <span style="font-size:13px;color:var(--gray-500)">${t.date}</span>
+        ${issued
+          ? '<span class="badge" style="background:#d1fae5;color:#065f46">✓ 발행완료</span>'
+          : '<span class="badge" style="background:#fef3c7;color:#92400e">미발행</span>'}
+      </div>
+      <button class="btn btn-sm ${issued ? 'btn-ghost' : 'btn-success'}" onclick="toggleHometaxIssued('${t.id}')">
+        ${issued ? '↩ 미발행으로' : '✓ 발행완료 표시'}
+      </button>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px">
+      ${htField('상호 (공급받는자)', v.companyName||'')}
+      ${htField('사업자번호', bnoFmt)}
+      ${htField('대표자명', v.representative||'')}
+      ${htField('주소', v.address||'')}
+      ${htField('이메일', v.email||'')}
+      ${htField('작성일자', t.date)}
+      ${htField('공급가액', fmt(supply)+'원')}
+      ${htField('세액 (10%)', fmt(tax)+'원')}
+      ${htField('합계금액', fmt(total)+'원')}
+    </div>
+    <div class="table-wrapper" style="margin:0">
+      <table>
+        <thead><tr>
+          <th style="width:32px">No</th><th>품목명</th><th>단위</th>
+          <th style="text-align:right">수량</th><th style="text-align:right">단가</th>
+          <th style="text-align:right">공급가액</th><th style="text-align:right">세액</th>
+        </tr></thead>
+        <tbody>${itemRows}</tbody>
+        <tfoot><tr style="background:var(--gray-50);font-weight:700">
+          <td colspan="5" style="padding:6px 8px;font-size:12px">합계</td>
+          <td style="padding:6px 8px;font-size:12px;text-align:right">${fmt(supply)}</td>
+          <td style="padding:6px 8px;font-size:12px;text-align:right">${fmt(tax)}</td>
+        </tr></tfoot>
+      </table>
+    </div>
+  </div>`;
+}
+
+function htField(label, value) {
+  const attr = (value||'').replace(/&/g,'&amp;').replace(/"/g,'&quot;').replace(/</g,'&lt;');
+  return `<div style="background:var(--gray-50);border-radius:6px;padding:8px 10px">
+    <div style="font-size:11px;color:var(--gray-500);margin-bottom:3px">${label}</div>
+    <div style="display:flex;align-items:center;gap:6px">
+      <span style="font-size:13px;font-weight:600;flex:1;word-break:break-all">${value||'<span style="color:var(--gray-400);font-weight:400">미입력</span>'}</span>
+      ${value ? `<button class="btn btn-ghost btn-sm" style="padding:2px 8px;font-size:11px;flex-shrink:0" onclick="htCopy(this.dataset.v)" data-v="${attr}">복사</button>` : ''}
+    </div>
+  </div>`;
+}
+
+function htCopy(text) {
+  navigator.clipboard.writeText(text).then(() => {
+    showSheetsBackupStatus('📋 복사됨', 'success');
+  }).catch(() => {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+      showSheetsBackupStatus('📋 복사됨', 'success');
+    } catch { alert('클립보드 복사 실패'); }
+  });
+}
+
+function toggleHometaxIssued(txId) {
+  const tx = transactions.find(t => t.id === txId);
+  if (!tx) return;
+  tx.taxInvoiceIssued = !tx.taxInvoiceIssued;
+  saveTransactions();
+  renderHometax(document.getElementById('page-hometax'));
+}
+
+function openHometaxGuide() {
+  openModal('📋 홈택스 전자세금계산서 발행 가이드', `
+    <div style="font-size:14px;line-height:1.9;padding:4px">
+      <ol style="padding-left:22px;margin:0">
+        <li style="margin-bottom:10px">
+          <b>홈택스 접속 후 로그인</b><br>
+          <span style="font-size:12px;color:var(--gray-500)">www.hometax.go.kr → 공동인증서 또는 간편인증</span>
+        </li>
+        <li style="margin-bottom:10px">
+          <b>발급 메뉴 이동</b><br>
+          <span style="font-size:12px;color:var(--gray-500)">상단 <b>세금계산서·영수증·카드</b> → <b>전자세금계산서 발급</b> → <b>건별발급</b></span>
+        </li>
+        <li style="margin-bottom:10px">
+          <b>공급받는자 정보 입력</b><br>
+          <span style="font-size:12px;color:var(--gray-500)">사업자번호 입력 후 확인 버튼으로 상호·대표자 자동완성 가능<br>이메일 입력 시 발급 즉시 거래처에게 자동 발송됩니다</span>
+        </li>
+        <li style="margin-bottom:10px">
+          <b>공급내역 입력</b><br>
+          <span style="font-size:12px;color:var(--gray-500)">작성일자 → 공급가액 → 세액 → 품목별 내역(품목명·수량·단가·금액·세액) 순 입력</span>
+        </li>
+        <li style="margin-bottom:10px">
+          <b>발급하기 클릭 후 인증서 서명</b><br>
+          <span style="font-size:12px;color:var(--gray-500)">발급 즉시 국세청에 전송, 거래처 이메일로도 자동 발송됩니다</span>
+        </li>
+        <li>
+          <b>앱에서 발행완료 표시</b><br>
+          <span style="font-size:12px;color:var(--gray-500)">발행 후 각 거래 카드의 ✓ 발행완료 표시를 눌러 관리하세요</span>
+        </li>
+      </ol>
+      <div style="background:#fef3c7;border-radius:8px;padding:12px 14px;margin-top:16px;font-size:13px">
+        ⚠ <b>발행 기한</b>: 공급일이 속하는 달의 다음달 10일까지 발행해야 합니다.<br>
+        지연 발행 시 공급가액의 0.5% 가산세가 부과될 수 있어요.
+      </div>
+    </div>
+  `, true);
+}
 
 // ── Init ──────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
