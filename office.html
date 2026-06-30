@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>클로드 사무실</title>
+  <link rel="stylesheet" href="styles.css">
+  <style>
+    .office-wrap { display:flex; height:100vh; }
+    .office-side { width:280px; background:#0f172a; color:#e2e8f0; display:flex; flex-direction:column; flex-shrink:0; }
+    .office-side-head { padding:16px 16px 10px; border-bottom:1px solid #334155; }
+    .office-side-title { font-size:16px; font-weight:700; }
+    .office-side-sub { font-size:11px; color:#94a3b8; margin-top:2px; }
+    .emp-list { flex:1; overflow-y:auto; padding:8px; }
+    .emp-card { display:flex; align-items:center; gap:10px; padding:10px; border-radius:8px; cursor:pointer; margin-bottom:4px; }
+    .emp-card:hover { background:#1e293b; }
+    .emp-card.active { background:#1d4ed8; }
+    .emp-emoji { font-size:22px; width:30px; text-align:center; flex-shrink:0; }
+    .emp-name { font-weight:600; font-size:14px; }
+    .emp-role { font-size:11px; color:#94a3b8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .emp-card.active .emp-role { color:#bfdbfe; }
+    .office-side-foot { padding:10px; border-top:1px solid #334155; display:flex; flex-direction:column; gap:6px; }
+    .office-main { flex:1; display:flex; flex-direction:column; min-width:0; background:var(--gray-50); }
+    .office-top { padding:14px 20px; background:#fff; border-bottom:1px solid var(--gray-200); display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    .chat-area { flex:1; overflow-y:auto; padding:20px; display:flex; flex-direction:column; gap:14px; }
+    .msg { max-width:760px; }
+    .msg.user { align-self:flex-end; }
+    .msg-bubble { padding:11px 14px; border-radius:12px; font-size:14px; line-height:1.6; white-space:pre-wrap; word-break:break-word; }
+    .msg.user .msg-bubble { background:#1d4ed8; color:#fff; border-bottom-right-radius:3px; }
+    .msg.ai .msg-bubble { background:#fff; border:1px solid var(--gray-200); border-bottom-left-radius:3px; }
+    .msg-meta { font-size:11px; color:var(--gray-400); margin:3px 4px; }
+    .chat-input { padding:14px 20px; background:#fff; border-top:1px solid var(--gray-200); }
+    .chat-input-row { display:flex; gap:8px; align-items:flex-end; }
+    .chat-input textarea { flex:1; resize:none; min-height:46px; max-height:160px; }
+    .empty-office { margin:auto; text-align:center; color:var(--gray-400); }
+    .handoff-bar { display:flex; gap:6px; flex-wrap:wrap; margin-top:6px; }
+    .ai-busy { font-size:13px; color:var(--gray-500); padding:8px 14px; }
+  </style>
+</head>
+<body>
+  <div class="office-wrap">
+    <aside class="office-side">
+      <div class="office-side-head">
+        <div class="office-side-title">🏢 클로드 사무실</div>
+        <div class="office-side-sub">AI 직원에게 지시하고 협업시키기</div>
+      </div>
+      <div class="emp-list" id="emp-list"></div>
+      <div class="office-side-foot">
+        <button class="btn btn-primary btn-sm" onclick="addEmployee()">＋ 직원 추가</button>
+        <button class="btn btn-ghost btn-sm" style="color:#e2e8f0" onclick="openLogs()">📜 전체 로그</button>
+        <button class="btn btn-ghost btn-sm" style="color:#e2e8f0" onclick="openOfficeConfig()">⚙ 설정</button>
+        <a class="btn btn-ghost btn-sm" style="color:#94a3b8;text-decoration:none" href="index.html">← 장부로</a>
+      </div>
+    </aside>
+
+    <main class="office-main">
+      <div class="office-top" id="office-top"></div>
+      <div class="chat-area" id="chat-area"></div>
+      <div class="chat-input" id="chat-input-wrap" style="display:none">
+        <div class="chat-input-row">
+          <textarea id="chat-input" class="form-control" placeholder="지시를 입력하세요… (Shift+Enter 줄바꿈)" oninput="autoGrow(this)" onkeydown="onChatKey(event)"></textarea>
+          <button class="btn btn-primary" id="send-btn" onclick="sendCommand()">보내기</button>
+        </div>
+        <div class="handoff-bar" id="handoff-bar"></div>
+      </div>
+    </main>
+  </div>
+
+  <div id="office-modal-overlay" class="modal-overlay hidden">
+    <div class="modal-box" id="office-modal-box">
+      <div class="modal-header">
+        <span id="office-modal-title" class="modal-title"></span>
+        <button class="modal-close" onclick="officeCloseModal()">✕</button>
+      </div>
+      <div id="office-modal-body" class="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="office.js"></script>
+</body>
+</html>
