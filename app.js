@@ -4432,15 +4432,11 @@ function doAddManualCandidate() {
 // ── 홈택스 수기 도우미 ────────────────────────────────────
 function renderHometax(el) {
   const f = _htFilter;
-  const allEligible = transactions.filter(t => {
-    if (t.type !== '매출') return false;
-    const v = vendors.find(v => v.id === t.vendorId);
-    return v && v.businessNumber;
-  });
-  const issuedCount  = allEligible.filter(t => t.taxInvoiceIssued).length;
-  const pendingCount = allEligible.length - issuedCount;
+  const allSales = transactions.filter(t => t.type === '매출');
+  const noBno    = allSales.filter(t => { const v = vendors.find(v => v.id === t.vendorId); return !v || !v.businessNumber; }).length;
+  const issued   = allSales.filter(t => t.taxInvoiceIssued).length;
 
-  const txs = allEligible.filter(t => {
+  let pool = allSales.filter(t => {
     const v = vendors.find(v => v.id === t.vendorId) || {};
     if (f.from && t.date < f.from) return false;
     if (f.to   && t.date > f.to)   return false;
@@ -4448,26 +4444,41 @@ function renderHometax(el) {
       const qq = f.q.toLowerCase();
       if (!(v.companyName||'').toLowerCase().includes(qq) && !(v.businessNumber||'').includes(qq)) return false;
     }
-    if (!f.showAll && t.taxInvoiceIssued) return false;
     return true;
-  }).sort((a, b) => b.date.localeCompare(a.date));
+  });
 
-  const qEsc = (f.q || '').replace(/"/g, '&quot;');
+  // month → vendorKey → { vendor, txs[] }
+  const groups = {};
+  pool.forEach(t => {
+    const month = t.date.slice(0, 7);
+    const vKey  = t.vendorId || '__none__';
+    const v     = vendors.find(v => v.id === t.vendorId) || null;
+    if (!groups[month]) groups[month] = {};
+    if (!groups[month][vKey]) groups[month][vKey] = { vendor: v, txs: [] };
+    groups[month][vKey].txs.push(t);
+  });
+
+  const months = Object.keys(groups).sort().reverse();
+  const qEsc   = (f.q || '').replace(/"/g, '&quot;');
+
   el.innerHTML = `
     <div class="page-header">
       <div>
         <div class="page-title">🧾 홈택스 수기 도우미</div>
-        <div class="page-subtitle">전자세금계산서를 홈택스에서 직접 발행할 때 필요한 정보를 정리해드려요</div>
+        <div class="page-subtitle">월별 · 업체별 합산으로 전자세금계산서 발행 정보를 정리해드려요</div>
       </div>
       <button class="btn btn-ghost btn-sm" onclick="openHometaxGuide()">📋 발행 가이드</button>
     </div>
+    ${noBno ? `<div style="background:#fef3c7;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px">
+      ⚠ 사업자번호 미등록 거래처 매출 <b>${noBno}건</b>이 있습니다. 거래처 관리에서 사업자번호를 입력하면 발행할 수 있어요.
+    </div>` : ''}
     <div class="filter-bar" style="margin-bottom:14px">
       <input type="date" class="form-control" value="${f.from}" style="width:140px"
         onchange="_htFilter.from=this.value;renderHometax(document.getElementById('page-hometax'))">
       <span style="color:var(--gray-400)">~</span>
       <input type="date" class="form-control" value="${f.to}" style="width:140px"
         onchange="_htFilter.to=this.value;renderHometax(document.getElementById('page-hometax'))">
-      <input type="text" class="form-control search-input" value="${qEsc}" placeholder="거래처명 / 사업자번호 검색" style="width:200px"
+      <input type="text" class="form-control search-input" value="${qEsc}" placeholder="거래처명 / 사업자번호" style="width:190px"
         oninput="_htFilter.q=this.value;renderHometax(document.getElementById('page-hometax'))">
       <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;white-space:nowrap">
         <input type="checkbox" ${f.showAll ? 'checked' : ''}
@@ -4475,75 +4486,98 @@ function renderHometax(el) {
       </label>
       ${(f.from||f.to||f.q) ? `<button class="btn btn-ghost btn-sm" onclick="_htFilter={from:'',to:'',q:'',showAll:_htFilter.showAll};renderHometax(document.getElementById('page-hometax'))">초기화</button>` : ''}
       <span style="margin-left:auto;font-size:13px;color:var(--gray-500);white-space:nowrap">
-        전체 ${allEligible.length}건 · 미발행 ${pendingCount} · 완료 ${issuedCount}
+        매출 ${allSales.length}건 · 발행완료 ${issued}건
       </span>
     </div>
-    ${!allEligible.length
-      ? `<div class="empty-state"><div class="empty-icon">🧾</div><div>세금계산서 발행 대상 거래가 없어요<br><small style="color:var(--gray-400)">매출 거래에 사업자번호가 있는 거래처를 연결하면 여기에 표시됩니다</small></div></div>`
-      : !txs.length
-        ? `<div class="empty-state"><div class="empty-icon">✓</div><div>${f.showAll ? '조건에 맞는 거래가 없습니다' : '미발행 거래가 없습니다'}<br><small style="color:var(--gray-400)">${f.showAll ? '' : '"발행완료 포함"을 체크하면 모두 볼 수 있어요'}</small></div></div>`
-        : `<div>${txs.map(t => htCard(t)).join('')}</div>`
+    ${!allSales.length
+      ? `<div class="empty-state"><div class="empty-icon">🧾</div><div>매출 거래가 없어요</div></div>`
+      : !months.length
+        ? `<div class="empty-state"><div class="empty-icon">🔍</div><div>조건에 맞는 거래가 없습니다</div></div>`
+        : months.map(m => htMonthSection(m, groups[m])).join('')
     }`;
 }
 
-function htCard(t) {
-  const v      = vendors.find(v => v.id === t.vendorId) || {};
-  const supply = t.items.reduce((s, i) => s + (i.amount || 0), 0);
-  const tax    = t.items.reduce((s, i) => s + (i.tax    || 0), 0);
-  const total  = supply + tax;
-  const issued = !!t.taxInvoiceIssued;
-  const bno    = (v.businessNumber || '').replace(/[^0-9]/g, '');
-  const bnoFmt = bno.length === 10 ? `${bno.slice(0,3)}-${bno.slice(3,5)}-${bno.slice(5)}` : (v.businessNumber || '');
+function htMonthSection(month, vendorMap) {
+  const [y, m] = month.split('-');
+  const label  = `${y}년 ${parseInt(m)}월`;
+  const f      = _htFilter;
 
-  const itemRows = t.items.map((i, n) => `<tr>
-    <td style="padding:4px 8px;font-size:12px;color:var(--gray-500)">${n+1}</td>
-    <td style="padding:4px 8px;font-size:12px">${i.itemName||''}</td>
-    <td style="padding:4px 8px;font-size:12px">${i.unit||''}</td>
-    <td style="padding:4px 8px;font-size:12px;text-align:right">${i.quantity != null ? fmt(i.quantity) : ''}</td>
-    <td style="padding:4px 8px;font-size:12px;text-align:right">${i.unitPrice ? fmt(i.unitPrice) : ''}</td>
-    <td style="padding:4px 8px;font-size:12px;text-align:right;font-weight:600">${fmt(i.amount||0)}</td>
-    <td style="padding:4px 8px;font-size:12px;text-align:right">${fmt(i.tax||0)}</td>
-  </tr>`).join('');
+  const entries = Object.entries(vendorMap).filter(([, g]) =>
+    f.showAll || g.txs.some(t => !t.taxInvoiceIssued)
+  );
+  if (!entries.length) return '';
 
-  return `<div class="card" style="margin-bottom:14px${issued ? ';opacity:0.55' : ''}">
-    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:14px">
-      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-        <span style="font-size:16px;font-weight:700">${v.companyName||'(거래처 없음)'}</span>
-        <span style="font-size:13px;color:var(--gray-500)">${t.date}</span>
-        ${issued
-          ? '<span class="badge" style="background:#d1fae5;color:#065f46">✓ 발행완료</span>'
-          : '<span class="badge" style="background:#fef3c7;color:#92400e">미발행</span>'}
+  return `<div style="margin-bottom:28px">
+    <div style="font-size:15px;font-weight:700;color:var(--gray-700);margin-bottom:10px;padding-bottom:6px;border-bottom:2px solid var(--gray-200)">${label}</div>
+    ${entries.map(([vKey, g]) => htVendorCard(vKey, g)).join('')}
+  </div>`;
+}
+
+function htVendorCard(vKey, g) {
+  const v       = g.vendor || {};
+  const txs     = g.txs;
+  const supply  = txs.reduce((s, t) => s + t.items.reduce((ss, i) => ss + (i.amount||0), 0), 0);
+  const tax     = txs.reduce((s, t) => s + t.items.reduce((ss, i) => ss + (i.tax||0), 0), 0);
+  const total   = supply + tax;
+  const hasBno  = !!(v.businessNumber);
+  const allDone = txs.every(t => t.taxInvoiceIssued);
+  const anyDone = txs.some(t => t.taxInvoiceIssued);
+  const bno     = (v.businessNumber || '').replace(/[^0-9]/g, '');
+  const bnoFmt  = bno.length === 10 ? `${bno.slice(0,3)}-${bno.slice(3,5)}-${bno.slice(5)}` : (v.businessNumber || '');
+  const txIds   = txs.map(t => t.id).join(',');
+  const dates   = [...new Set(txs.map(t => t.date))].sort().join(', ');
+
+  if (!hasBno) {
+    return `<div class="card" style="margin-bottom:10px;border-left:3px solid #f59e0b;opacity:0.8">
+      <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div>
+          <span style="font-weight:700">${v.companyName || (vKey === '__none__' ? '(거래처 미지정)' : '(삭제된 거래처)')}</span>
+          <span class="badge" style="background:#fef3c7;color:#92400e;margin-left:8px">⚠ 사업자번호 없음</span>
+        </div>
+        <span style="font-size:13px;color:var(--gray-500)">${txs.length}건 · 공급가액 ${fmt(supply)} / 세액 ${fmt(tax)}</span>
       </div>
-      <button class="btn btn-sm ${issued ? 'btn-ghost' : 'btn-success'}" onclick="toggleHometaxIssued('${t.id}')">
-        ${issued ? '↩ 미발행으로' : '✓ 발행완료 표시'}
+      <div style="font-size:12px;color:var(--gray-400);margin-top:5px">거래처 관리에서 사업자번호를 등록하세요</div>
+    </div>`;
+  }
+
+  const detailRows = txs.map(t => {
+    const ts = t.items.reduce((s,i)=>s+(i.amount||0),0);
+    const tt = t.items.reduce((s,i)=>s+(i.tax||0),0);
+    return `<div style="display:flex;justify-content:space-between;padding:4px 0;border-bottom:1px solid var(--gray-100);font-size:12px">
+      <span style="color:var(--gray-500)">${t.date}</span>
+      <span>공급가액 <b>${fmt(ts)}</b> / 세액 ${fmt(tt)}</span>
+    </div>`;
+  }).join('');
+
+  return `<div class="card" style="margin-bottom:10px${allDone ? ';opacity:0.55' : ''}">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:12px">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span style="font-size:15px;font-weight:700">${v.companyName||'(거래처 없음)'}</span>
+        ${allDone
+          ? '<span class="badge" style="background:#d1fae5;color:#065f46">✓ 발행완료</span>'
+          : anyDone
+            ? '<span class="badge" style="background:#e0e7ff;color:#3730a3">일부 발행</span>'
+            : '<span class="badge" style="background:#fef3c7;color:#92400e">미발행</span>'}
+        <span style="font-size:12px;color:var(--gray-400)">${txs.length}건 (${dates})</span>
+      </div>
+      <button class="btn btn-sm ${allDone ? 'btn-ghost' : 'btn-success'}"
+        onclick="toggleHometaxGroupIssued('${txIds}',${!allDone})">
+        ${allDone ? '↩ 미발행으로' : '✓ 발행완료 표시'}
       </button>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:8px;margin-bottom:14px">
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:8px;margin-bottom:12px">
       ${htField('상호 (공급받는자)', v.companyName||'')}
       ${htField('사업자번호', bnoFmt)}
       ${htField('대표자명', v.representative||'')}
-      ${htField('주소', v.address||'')}
       ${htField('이메일', v.email||'')}
-      ${htField('작성일자', t.date)}
-      ${htField('공급가액', fmt(supply)+'원')}
-      ${htField('세액 (10%)', fmt(tax)+'원')}
-      ${htField('합계금액', fmt(total)+'원')}
+      ${htField('월 공급가액 합계', fmt(supply)+'원')}
+      ${htField('월 세액 합계 (10%)', fmt(tax)+'원')}
+      ${htField('월 합계금액', fmt(total)+'원')}
     </div>
-    <div class="table-wrapper" style="margin:0">
-      <table>
-        <thead><tr>
-          <th style="width:32px">No</th><th>품목명</th><th>단위</th>
-          <th style="text-align:right">수량</th><th style="text-align:right">단가</th>
-          <th style="text-align:right">공급가액</th><th style="text-align:right">세액</th>
-        </tr></thead>
-        <tbody>${itemRows}</tbody>
-        <tfoot><tr style="background:var(--gray-50);font-weight:700">
-          <td colspan="5" style="padding:6px 8px;font-size:12px">합계</td>
-          <td style="padding:6px 8px;font-size:12px;text-align:right">${fmt(supply)}</td>
-          <td style="padding:6px 8px;font-size:12px;text-align:right">${fmt(tax)}</td>
-        </tr></tfoot>
-      </table>
-    </div>
+    <details>
+      <summary style="cursor:pointer;user-select:none;font-size:12px;color:var(--gray-500)">▶ 건별 내역 ${txs.length}건</summary>
+      <div style="margin-top:8px">${detailRows}</div>
+    </details>
   </div>`;
 }
 
@@ -4574,10 +4608,11 @@ function htCopy(text) {
   });
 }
 
-function toggleHometaxIssued(txId) {
-  const tx = transactions.find(t => t.id === txId);
-  if (!tx) return;
-  tx.taxInvoiceIssued = !tx.taxInvoiceIssued;
+function toggleHometaxGroupIssued(txIdsStr, val) {
+  txIdsStr.split(',').forEach(id => {
+    const tx = transactions.find(t => t.id === id);
+    if (tx) tx.taxInvoiceIssued = val;
+  });
   saveTransactions();
   renderHometax(document.getElementById('page-hometax'));
 }
@@ -4592,7 +4627,7 @@ function openHometaxGuide() {
         </li>
         <li style="margin-bottom:10px">
           <b>발급 메뉴 이동</b><br>
-          <span style="font-size:12px;color:var(--gray-500)">상단 <b>세금계산서·영수증·카드</b> → <b>전자세금계산서 발급</b> → <b>건별발급</b></span>
+          <span style="font-size:12px;color:var(--gray-500)">상단 <b>세금계산서·영수증·카드</b> → <b>전자세금계산서 발급</b> → <b>건별발급</b> (또는 월합계발급)</span>
         </li>
         <li style="margin-bottom:10px">
           <b>공급받는자 정보 입력</b><br>
@@ -4600,15 +4635,15 @@ function openHometaxGuide() {
         </li>
         <li style="margin-bottom:10px">
           <b>공급내역 입력</b><br>
-          <span style="font-size:12px;color:var(--gray-500)">작성일자 → 공급가액 → 세액 → 품목별 내역(품목명·수량·단가·금액·세액) 순 입력</span>
+          <span style="font-size:12px;color:var(--gray-500)">작성일자 → 공급가액 → 세액 → 품목별 내역 순 입력<br>월합계 발행 시 공급가액·세액 합산값 입력</span>
         </li>
         <li style="margin-bottom:10px">
           <b>발급하기 클릭 후 인증서 서명</b><br>
-          <span style="font-size:12px;color:var(--gray-500)">발급 즉시 국세청에 전송, 거래처 이메일로도 자동 발송됩니다</span>
+          <span style="font-size:12px;color:var(--gray-500)">발급 즉시 국세청 전송, 거래처 이메일로도 자동 발송됩니다</span>
         </li>
         <li>
           <b>앱에서 발행완료 표시</b><br>
-          <span style="font-size:12px;color:var(--gray-500)">발행 후 각 거래 카드의 ✓ 발행완료 표시를 눌러 관리하세요</span>
+          <span style="font-size:12px;color:var(--gray-500)">발행 후 ✓ 발행완료 표시 버튼을 눌러 관리하세요</span>
         </li>
       </ol>
       <div style="background:#fef3c7;border-radius:8px;padding:12px 14px;margin-top:16px;font-size:13px">
