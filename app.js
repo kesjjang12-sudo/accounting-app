@@ -500,6 +500,8 @@ function _updateSelUI(page) {
   if (btn) { btn.textContent = `선택 삭제 (${s.size}건)`; btn.style.display = s.size ? '' : 'none'; }
   const bulkBtn = document.getElementById(`sel-bulk-${page}`);
   if (bulkBtn) { bulkBtn.textContent = `✏ 일괄 변경 (${s.size}건)`; bulkBtn.style.display = s.size ? '' : 'none'; }
+  const moveBtn = document.getElementById(`sel-move-${page}`);
+  if (moveBtn) { moveBtn.textContent = `🔁 사업체 이동 (${s.size}건)`; moveBtn.style.display = s.size ? '' : 'none'; }
   const all = document.querySelectorAll(`.sel-cb[data-page="${page}"]`);
   const hdr = document.getElementById(`sel-all-${page}`);
   if (hdr && all.length) hdr.checked = s.size === all.length;
@@ -515,6 +517,56 @@ function deleteSelected(page) {
   if (page==='quotes')   { quotes       = quotes.filter(q=>!s.has(q.id));        saveQuotes(); }
   s.clear();
   render(currentPage);
+}
+
+// 거래처 상세에서 날짜/품목 클릭 → 거래내역 페이지에서 그 날짜 거래 표시
+function goToTxFromDetail(date, vendorId) {
+  closeModal();
+  txSearch = '';
+  txFilter = { type: '', vendorId: vendorId || '', dateFrom: date, dateTo: date, paid: '' };
+  navigate('transactions');
+}
+
+// 선택한 거래를 다른 사업체로 이동
+function moveTxBizModal() {
+  const count = _sel.txRows.size;
+  if (!count) return;
+  const others = businesses.filter(b => b.id !== currentBizId);
+  if (!others.length) { alert('이동할 다른 사업체가 없습니다.'); return; }
+  openModal(`선택 ${count}건 사업체 이동`, `
+    <div style="display:flex;flex-direction:column;gap:16px">
+      <div class="form-group">
+        <label>이동할 사업체</label>
+        <select id="move-biz-target" class="form-control">
+          ${others.map(b => `<option value="${b.id}">${b.name}</option>`).join('')}
+        </select>
+      </div>
+      <p style="font-size:12px;color:var(--gray-500)">선택한 ${count}건을 현재 사업체에서 빼서 위 사업체로 옮깁니다.</p>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost" onclick="closeModal()">취소</button>
+        <button class="btn btn-primary" onclick="doMoveTxBiz()">이동</button>
+      </div>
+    </div>
+  `);
+}
+
+function doMoveTxBiz() {
+  const targetId = document.getElementById('move-biz-target').value;
+  if (!targetId) return;
+  const ids = _sel.txRows;
+  const moving = transactions.filter(t => ids.has(t.id));
+  if (!moving.length) { closeModal(); return; }
+  const targetKey = 'acc_transactions__' + targetId;
+  let targetTxs = [];
+  try { targetTxs = JSON.parse(localStorage.getItem(targetKey) || '[]'); } catch (e) {}
+  localStorage.setItem(targetKey, JSON.stringify(targetTxs.concat(moving)));
+  transactions = transactions.filter(t => !ids.has(t.id));
+  saveTransactions();
+  _sel.txRows.clear();
+  closeModal();
+  const tname = businesses.find(b => b.id === targetId)?.name || '';
+  render(currentPage);
+  alert(`${moving.length}건을 "${tname}"(으)로 이동했습니다.`);
 }
 
 function bulkEditTxModal() {
@@ -1268,9 +1320,9 @@ function openVendorDetail(vendorId) {
       : '';
     return `<tr>
       <td style="text-align:center"><input type="checkbox" class="tx-checkbox" value="${t.id}" checked></td>
-      <td>${t.date}</td>
+      <td><a class="vendor-link" onclick="goToTxFromDetail('${t.date}','${vendorId}')" title="거래내역에서 이 날짜 보기">${t.date}</a></td>
       <td>${t.type === '매출' ? '<span class="badge badge-sales">매출</span>' : '<span class="badge badge-purchase">매입</span>'}</td>
-      <td>${summary}</td>
+      <td><a class="vendor-link" onclick="goToTxFromDetail('${t.date}','${vendorId}')" title="거래내역에서 이 날짜 보기">${summary}</a></td>
       <td style="text-align:right">${fmt(amt)}원</td>
       <td style="text-align:right">${fmt(tax)}원</td>
       <td style="text-align:right"><strong>${fmt(amt+tax)}원</strong></td>
@@ -1910,6 +1962,7 @@ function renderTransactions(el) {
     <div class="filter-bar">
       <button id="sel-del-txRows" class="btn btn-danger btn-sm" style="display:none" onclick="deleteSelected('txRows')">선택 삭제</button>
       <button id="sel-bulk-txRows" class="btn btn-primary btn-sm" style="display:none" onclick="bulkEditTxModal()">✏ 일괄 변경</button>
+      <button id="sel-move-txRows" class="btn btn-ghost btn-sm" style="display:none" onclick="moveTxBizModal()">🔁 사업체 이동</button>
       <input class="form-control search-input" id="tx-search" placeholder="거래처명 / 품목명 검색" value="${txSearch}">
       <select class="form-control" id="tx-type"><option value="">전체 구분</option><option value="매출" ${txFilter.type==='매출'?'selected':''}>매출</option><option value="매입" ${txFilter.type==='매입'?'selected':''}>매입</option></select>
       <select class="form-control" id="tx-vendor"><option value="">전체 거래처</option>${vOpts}</select>
