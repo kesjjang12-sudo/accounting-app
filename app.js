@@ -1703,10 +1703,10 @@ function renderVendors(el) {
       </div>
     </div>
     <div class="filter-bar"><input class="search-input form-control" id="vendor-search" placeholder="상호명 / 사업자번호 검색" value="${vendorSearch}"></div>
-    <div class="table-wrapper"><table>
+    <div class="table-wrapper"><table data-sort-id="vendors">
       <thead><tr>
-        <th style="width:36px;text-align:center"><input type="checkbox" id="sel-all-vendors" class="tx-checkbox" onchange="selAll('vendors',this)"></th>
-        <th>상호명</th><th>대표자</th><th>사업자번호</th><th>주소</th><th>이메일</th><th>구분</th><th>관리</th>
+        <th class="no-sort" style="width:36px;text-align:center"><input type="checkbox" id="sel-all-vendors" class="tx-checkbox" onchange="selAll('vendors',this)"></th>
+        <th>상호명</th><th>대표자</th><th>사업자번호</th><th>주소</th><th>이메일</th><th>구분</th><th class="no-sort">관리</th>
       </tr></thead>
       <tbody id="vendors-tbody">${rows}</tbody>
     </table></div>`;
@@ -1807,10 +1807,10 @@ function renderItems(el) {
       </div>
     </div>
     <div class="filter-bar"><input class="search-input form-control" id="item-search" placeholder="품목명 / 코드 검색" value="${itemSearch}"></div>
-    <div class="table-wrapper"><table>
+    <div class="table-wrapper"><table data-sort-id="items">
       <thead><tr>
-        <th style="width:36px;text-align:center"><input type="checkbox" id="sel-all-items" class="tx-checkbox" onchange="selAll('items',this)"></th>
-        <th>코드</th><th>품목명/규격</th><th>단위</th><th style="text-align:right">매입단가</th><th>매입거래처</th><th style="text-align:right">매출단가</th><th>매출거래처</th><th>세금</th><th>관리</th>
+        <th class="no-sort" style="width:36px;text-align:center"><input type="checkbox" id="sel-all-items" class="tx-checkbox" onchange="selAll('items',this)"></th>
+        <th>코드</th><th>품목명/규격</th><th>단위</th><th style="text-align:right">매입단가</th><th>매입거래처</th><th style="text-align:right">매출단가</th><th>매출거래처</th><th>세금</th><th class="no-sort">관리</th>
       </tr></thead>
       <tbody id="items-tbody">${rows}</tbody>
     </table></div>`;
@@ -1974,10 +1974,10 @@ function renderTransactions(el) {
       <input class="form-control" id="tx-from" type="date" value="${txFilter.dateFrom}">
       <input class="form-control" id="tx-to"   type="date" value="${txFilter.dateTo}">
     </div>
-    <div class="table-wrapper"><table>
+    <div class="table-wrapper"><table data-sort-id="txRows">
       <thead><tr>
-        <th style="width:36px;text-align:center"><input type="checkbox" id="sel-all-txRows" class="tx-checkbox" onchange="selAll('txRows',this)"></th>
-        <th>날짜</th><th>구분</th><th>거래처</th><th>적요</th><th>결제방법</th><th style="text-align:right">공급가액</th><th style="text-align:right">세액</th><th style="text-align:right">합계</th><th>결제상태</th><th>관리</th>
+        <th class="no-sort" style="width:36px;text-align:center"><input type="checkbox" id="sel-all-txRows" class="tx-checkbox" onchange="selAll('txRows',this)"></th>
+        <th>날짜</th><th>구분</th><th>거래처</th><th>적요</th><th>결제방법</th><th style="text-align:right">공급가액</th><th style="text-align:right">세액</th><th style="text-align:right">합계</th><th>결제상태</th><th class="no-sort">관리</th>
       </tr></thead>
       <tbody id="tx-tbody">${rows}</tbody>
     </table></div>`;
@@ -2727,11 +2727,11 @@ function renderQuotes(el) {
     </div>
 
     <div class="table-wrapper">
-      <table>
+      <table data-sort-id="quotes">
         <thead><tr>
-          <th style="width:36px;text-align:center"><input type="checkbox" id="sel-all-quotes" class="tx-checkbox" onchange="selAll('quotes',this)"></th>
+          <th class="no-sort" style="width:36px;text-align:center"><input type="checkbox" id="sel-all-quotes" class="tx-checkbox" onchange="selAll('quotes',this)"></th>
           <th>번호</th><th>작성일</th><th>유효기간</th><th>거래처</th>
-          <th style="text-align:right">금액(세포함)</th><th>상태</th><th>관리</th>
+          <th style="text-align:right">금액(세포함)</th><th>상태</th><th class="no-sort">관리</th>
         </tr></thead>
         <tbody>${rows}</tbody>
       </table>
@@ -3289,7 +3289,7 @@ function renderJournal(el) {
 
     ${txs.length === 0 ? `<div class="empty-state"><div class="empty-icon">⚖️</div><div>표시할 거래가 없습니다. 거래 내역을 먼저 등록해주세요.</div></div>` : `
     <div class="table-wrapper" style="margin-bottom:16px">
-      <table>
+      <table data-sort-id="journal">
         <thead><tr>
           <th>날짜</th><th>적요</th>
           <th>차변 계정</th><th style="text-align:right">차변 금액</th>
@@ -4280,11 +4280,11 @@ function renderCandidatesPage(el) {
       <span style="width:1px;height:20px;background:var(--gray-200);margin:0 2px"></span>
       <select class="form-control" style="width:auto;min-width:120px" onchange="this.closest('.page')._month=this.value;renderCandidatesPage(this.closest('.page'))">${monthOpts}</select>
     </div>
-    <div class="table-wrapper"><table>
+    <div class="table-wrapper"><table data-sort-id="candidates">
       <thead><tr>
         <th style="text-align:center">날짜</th><th>가맹점</th><th style="text-align:right">금액</th>
         <th style="text-align:center">카드</th><th style="text-align:center">계정</th>
-        <th style="text-align:center">상태</th><th>관리</th>
+        <th style="text-align:center">상태</th><th class="no-sort">관리</th>
       </tr></thead>
       <tbody>${rows}</tbody>
     </table></div>`;
@@ -4555,15 +4555,15 @@ function htVendorCard(vKey, g) {
     return `<div style="border-bottom:1px solid var(--gray-100);padding:8px 0">
       <div style="font-size:12px;font-weight:600;color:var(--gray-600);margin-bottom:4px">${t.date}</div>
       <div class="table-wrapper" style="margin:0">
-        <table>
+        <table data-sort-id="ht-item-${t.id}">
           <thead><tr style="background:var(--gray-50)">
-            <th style="width:28px;font-size:11px">No</th>
+            <th class="no-sort" style="width:32px;font-size:11px">No</th>
             <th style="font-size:11px">품목명</th>
-            <th style="font-size:11px">단위</th>
-            <th style="text-align:right;font-size:11px">수량</th>
-            <th style="text-align:right;font-size:11px">단가</th>
-            <th style="text-align:right;font-size:11px">공급가액</th>
-            <th style="text-align:right;font-size:11px">세액</th>
+            <th style="width:52px;font-size:11px">단위</th>
+            <th style="width:72px;text-align:right;font-size:11px">수량</th>
+            <th style="width:100px;text-align:right;font-size:11px">단가</th>
+            <th style="width:100px;text-align:right;font-size:11px">공급가액</th>
+            <th style="width:84px;text-align:right;font-size:11px">세액</th>
           </tr></thead>
           <tbody>${itemRows}</tbody>
           <tfoot><tr style="background:var(--gray-50);font-weight:700">
@@ -4681,6 +4681,52 @@ function openHometaxGuide() {
   `, true);
 }
 
+// ── 테이블 다중 정렬 ──────────────────────────────────────
+const _sorts = {};
+
+function _parseSortVal(text) {
+  const s = (text || '').replace(/,/g, '').replace(/원/g, '').trim();
+  const n = parseFloat(s);
+  return isNaN(n) ? s.toLowerCase() : n;
+}
+
+function applyTableSort(table) {
+  const sid = table.dataset.sortId;
+  const sorts = _sorts[sid];
+  if (!sid || !sorts || !sorts.length) return;
+  const tbody = table.querySelector('tbody');
+  if (!tbody) return;
+  const rows = [...tbody.rows];
+  rows.sort((a, b) => {
+    for (const { col, dir } of sorts) {
+      const av = _parseSortVal(a.cells[col]?.textContent);
+      const bv = _parseSortVal(b.cells[col]?.textContent);
+      const cmp = (typeof av === 'number' && typeof bv === 'number')
+        ? av - bv
+        : String(av).localeCompare(String(bv), 'ko');
+      if (cmp) return dir === 'asc' ? cmp : -cmp;
+    }
+    return 0;
+  });
+  rows.forEach(r => tbody.appendChild(r));
+  _renderSortBadges(table);
+}
+
+function _renderSortBadges(table) {
+  const sid = table.dataset.sortId;
+  const sorts = _sorts[sid] || [];
+  table.querySelectorAll('thead th').forEach((th, i) => {
+    th.querySelector('.sort-badge')?.remove();
+    const found = sorts.find(s => s.col === i);
+    if (found) {
+      const span = document.createElement('span');
+      span.className = 'sort-badge';
+      span.textContent = (found.dir === 'asc' ? ' ▲' : ' ▼') + (sorts.length > 1 ? sorts.indexOf(found) + 1 : '');
+      th.appendChild(span);
+    }
+  });
+}
+
 // ── Init ──────────────────────────────────────────────────
 document.addEventListener('DOMContentLoaded', () => {
   document.querySelectorAll('.nav-item').forEach(el => el.addEventListener('click', () => navigate(el.dataset.page)));
@@ -4688,6 +4734,35 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('modal-overlay').addEventListener('click', e => {
     if (e.target === document.getElementById('modal-overlay')) closeModal();
   });
+
+  // 테이블 정렬: 이벤트 위임 (클릭 = 단일정렬, Shift+클릭 = 다중정렬 추가)
+  document.addEventListener('click', e => {
+    const th = e.target.closest('table[data-sort-id] thead th:not(.no-sort)');
+    if (!th) return;
+    const table = th.closest('table');
+    const sid   = table.dataset.sortId;
+    if (!_sorts[sid]) _sorts[sid] = [];
+    const sorts = _sorts[sid];
+    const col   = [...th.parentElement.children].indexOf(th);
+    const ei    = sorts.findIndex(s => s.col === col);
+
+    if (e.shiftKey && sorts.length) {
+      if (ei >= 0) { sorts[ei].dir = sorts[ei].dir === 'asc' ? 'desc' : 'asc'; }
+      else          { sorts.push({ col, dir: 'asc' }); }
+    } else {
+      if (ei >= 0 && sorts.length === 1) { sorts[0].dir = sorts[0].dir === 'asc' ? 'desc' : 'asc'; }
+      else { _sorts[sid] = [{ col, dir: 'asc' }]; }
+    }
+    applyTableSort(table);
+  });
+
+  // 페이지 재렌더 후 기존 정렬 자동 재적용
+  new MutationObserver(() => {
+    document.querySelectorAll('table[data-sort-id]').forEach(t => {
+      if (_sorts[t.dataset.sortId]?.length) applyTableSort(t);
+    });
+  }).observe(document.querySelector('.main-content'), { subtree: true, childList: true });
+
   renderSidebarBiz();
   render('home');
   renderBackupStatus();
