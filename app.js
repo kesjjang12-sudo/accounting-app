@@ -4688,11 +4688,12 @@ function openHometaxGuide() {
 // ── 테이블 다중 정렬 ──────────────────────────────────────
 const _sorts = {};
 let _sortObs = null;
+const _koCol = new Intl.Collator('ko');
 
 function _parseSortVal(text) {
   const s = (text || '').replace(/,/g, '').replace(/원/g, '').trim();
   const n = parseFloat(s);
-  return isNaN(n) ? s.toLowerCase() : n;
+  return isNaN(n) ? s : n;
 }
 
 function applyTableSort(table) {
@@ -4702,20 +4703,20 @@ function applyTableSort(table) {
   const tbody = table.querySelector('tbody');
   if (!tbody) return;
   const rows = [...tbody.rows];
-  rows.sort((a, b) => {
-    for (const { col, dir } of sorts) {
-      const av = _parseSortVal(a.cells[col]?.textContent);
-      const bv = _parseSortVal(b.cells[col]?.textContent);
+  const keyed = rows.map(r => ({ r, k: sorts.map(({ col }) => _parseSortVal(r.cells[col]?.textContent)) }));
+  keyed.sort((a, b) => {
+    for (let i = 0; i < sorts.length; i++) {
+      const av = a.k[i], bv = b.k[i], { dir } = sorts[i];
       const cmp = (typeof av === 'number' && typeof bv === 'number')
         ? av - bv
-        : String(av).localeCompare(String(bv), 'ko');
+        : _koCol.compare(String(av), String(bv));
       if (cmp) return dir === 'asc' ? cmp : -cmp;
     }
     return 0;
   });
   _sortObs?.disconnect();
   const frag = document.createDocumentFragment();
-  rows.forEach(r => frag.appendChild(r));
+  keyed.forEach(({ r }) => frag.appendChild(r));
   tbody.appendChild(frag);
   _renderSortBadges(table);
   _sortObs?.observe(document.querySelector('.main-content'), { subtree: true, childList: true });
