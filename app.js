@@ -1677,13 +1677,15 @@ function vendorRowsHtml() {
   return filtered.map(v => `<tr>
     <td style="text-align:center;width:36px"><input type="checkbox" class="sel-cb tx-checkbox" data-page="vendors" value="${v.id}" ${_sel.vendors.has(v.id)?'checked':''} onchange="toggleSel('vendors','${v.id}')"></td>
     <td>${v.companyName}</td><td>${v.representative||'-'}</td><td>${v.businessNumber||'-'}</td>
-    <td>${v.address||'-'}</td><td>${v.email||'-'}</td>
+    <td style="font-size:12px;max-width:200px;white-space:normal">${v.address||'-'}</td>
+    <td>${v.bizCategory||'-'}</td>
+    <td>${v.email||'-'}</td>
     <td>${v.accountType==='매출'?'<span class="badge badge-sales">매출</span>':v.accountType==='매입'?'<span class="badge badge-purchase">매입</span>':'<span class="badge badge-both">매출+매입</span>'}</td>
     <td><div class="td-actions">
       <button class="btn btn-ghost btn-sm" onclick="editVendor('${v.id}')">수정</button>
       <button class="btn btn-danger btn-sm" onclick="deleteVendor('${v.id}')">삭제</button>
     </div></td>
-  </tr>`).join('') || `<tr><td colspan="8"><div class="empty-state"><div class="empty-icon">🏢</div><p>등록된 거래처가 없습니다</p></div></td></tr>`;
+  </tr>`).join('') || `<tr><td colspan="9"><div class="empty-state"><div class="empty-icon">🏢</div><p>등록된 거래처가 없습니다</p></div></td></tr>`;
 }
 
 function renderVendors(el) {
@@ -1706,7 +1708,7 @@ function renderVendors(el) {
     <div class="table-wrapper"><table data-sort-id="vendors">
       <thead><tr>
         <th class="no-sort" style="width:36px;text-align:center"><input type="checkbox" id="sel-all-vendors" class="tx-checkbox" onchange="selAll('vendors',this)"></th>
-        <th>상호명</th><th>대표자</th><th>사업자번호</th><th>주소</th><th>이메일</th><th>구분</th><th class="no-sort">관리</th>
+        <th>상호명</th><th>대표자</th><th>사업자번호</th><th>주소</th><th>업태</th><th>이메일</th><th>구분</th><th class="no-sort">관리</th>
       </tr></thead>
       <tbody id="vendors-tbody">${rows}</tbody>
     </table></div>`;
@@ -1727,6 +1729,7 @@ function openVendorModal(id = null) {
       <div class="form-group"><label>상호명 *</label><input id="v-company" class="form-control" value="${v?v.companyName:''}"></div>
       <div class="form-group"><label>대표자</label><input id="v-rep" class="form-control" value="${v?v.representative||'':''}"></div>
       <div class="form-group"><label>사업자번호</label><input id="v-biz" class="form-control" placeholder="000-00-00000" value="${v?v.businessNumber||'':''}"></div>
+      <div class="form-group"><label>업태</label><input id="v-bizcat" class="form-control" placeholder="제조업, 도매업 등" value="${v?v.bizCategory||'':''}"></div>
       <div class="form-group"><label>이메일</label><input id="v-email" class="form-control" value="${v?v.email||'':''}"></div>
       <div class="form-group full"><label>주소</label><input id="v-addr" class="form-control" value="${v?v.address||'':''}"></div>
       <div class="form-group full"><label>거래 구분 *</label>
@@ -1750,6 +1753,7 @@ function saveVendor(id) {
   const data = {
     companyName, representative: document.getElementById('v-rep').value.trim(),
     businessNumber: document.getElementById('v-biz').value.trim(),
+    bizCategory: document.getElementById('v-bizcat').value.trim(),
     email: document.getElementById('v-email').value.trim(),
     address: document.getElementById('v-addr').value.trim(),
     accountType: document.querySelector('input[name="v-type"]:checked')?.value || '매출'
