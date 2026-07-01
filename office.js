@@ -53,31 +53,58 @@ async function syncToGas() {
 }
 
 async function syncFromGas() {
-  if (!GAS_URL || !SECRET) return;
+  if (!GAS_URL || !SECRET) { alert('⚙ 설정에서 GAS 주소와 키를 입력하세요.'); return; }
   const indicator = $('sync-indicator');
-  if (indicator) indicator.textContent = '☁ 불러오는 중…';
+  if (indicator) indicator.textContent = '☁ 동기화 중…';
   try {
+    // 1. 클라우드에서 내려받기
     const res = await fetch(GAS_URL, {
       method: 'POST',
       body: JSON.stringify({ secretKey: SECRET, action: 'loadOfficeChatHistory' })
     });
     const json = await res.json();
-    if (!json.success || !json.data) { if (indicator) indicator.textContent = ''; return; }
-    const data = json.data;
+    const data = (json.success && json.data) ? json.data : {};
+
+    // 2. 직원 목록 병합 (클라우드에 있는데 로컬에 없는 직원 추가)
     if (data.office_employees) {
       try {
-        const emps = JSON.parse(data.office_employees);
-        if (Array.isArray(emps) && emps.length) { employees = emps; saveEmployees(); }
+        const remoteEmps = JSON.parse(data.office_employees);
+        if (Array.isArray(remoteEmps) && remoteEmps.length) {
+          remoteEmps.forEach(re => { if (!employees.find(e => e.id === re.id)) employees.push(re); });
+          saveEmployees();
+        }
       } catch {}
     }
-    Object.keys(data).forEach(k => {
-      if (k.startsWith('office_chat_')) localStorage.setItem(k, data[k]);
+
+    // 3. 대화내역 병합 (로컬 + 클라우드 합집합, role+ts+앞50자로 중복제거)
+    const allChatKeys = new Set([
+      ...employees.map(e => chatKey(e.id)),
+      ...Object.keys(data).filter(k => k.startsWith('office_chat_'))
+    ]);
+    allChatKeys.forEach(k => {
+      try {
+        const empId = k.replace('office_chat_', '');
+        const localMsgs  = loadChat(empId);
+        const remoteMsgs = data[k] ? JSON.parse(data[k]) : [];
+        const seen   = new Set(localMsgs.map(m => m.role + '|' + m.ts + '|' + String(m.content).slice(0, 50)));
+        const merged = [...localMsgs];
+        remoteMsgs.forEach(m => {
+          const key = m.role + '|' + m.ts + '|' + String(m.content).slice(0, 50);
+          if (!seen.has(key)) { seen.add(key); merged.push(m); }
+        });
+        if (merged.length) localStorage.setItem(k, JSON.stringify(merged));
+      } catch {}
     });
+
+    // 4. 병합 결과를 클라우드에 다시 올리기
+    await syncToGas();
+
     if (indicator) indicator.textContent = '☁ 동기화됨';
-    setTimeout(() => { if (indicator) indicator.textContent = ''; }, 2000);
+    setTimeout(() => { if (indicator) indicator.textContent = ''; }, 2500);
     renderAll();
-  } catch {
-    if (indicator) indicator.textContent = '';
+  } catch (err) {
+    if (indicator) indicator.textContent = '⚠ 실패';
+    setTimeout(() => { if (indicator) indicator.textContent = ''; }, 3000);
   }
 }
 
