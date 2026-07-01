@@ -112,6 +112,16 @@ function doPost(e) {
       return respond(askClaude(payload));
     }
 
+    // AI 사무실: 대화내역 클라우드 동기화
+    if (payload.action === 'saveOfficeChatHistory') {
+      if (!payload.data || typeof payload.data !== 'object') return respond({ success: false, message: 'data 없음' });
+      writeKvSheet(getOfficeChatSheet(), payload.data);
+      return respond({ success: true });
+    }
+    if (payload.action === 'loadOfficeChatHistory') {
+      return respond({ success: true, data: readKvSheet(getOfficeChatSheet()) });
+    }
+
     // 사업비 후보 API
     if (payload.action === 'getExpenseCandidates') {
       return respond({ success: true, candidates: getCandidates() });
@@ -488,6 +498,18 @@ function suggestCategory(merchant) {
   if (/AWS|Google|클라우드|호스팅|도메인|GPT|구독|소프트웨어/i.test(m))     return '통신비';
   if (/병원|약국|건강/i.test(m))                                            return '복리후생비';
   return '기타경비';
+}
+
+function getOfficeChatSheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet = ss.getSheetByName('office_chats');
+  if (!sheet) {
+    sheet = ss.insertSheet('office_chats');
+    sheet.getRange('A1:C1').setValues([['key', 'value', 'updatedAt']]);
+    sheet.setFrozenRows(1);
+    sheet.getRange('A1:C1').setFontWeight('bold');
+  }
+  return sheet;
 }
 
 // ── 공용 유틸 ─────────────────────────────────────────────

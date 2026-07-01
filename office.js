@@ -24,7 +24,62 @@ let currentEmpId = employees[0] ? employees[0].id : null;
 
 function chatKey(id) { return 'office_chat_' + id; }
 function loadChat(id) { try { return JSON.parse(localStorage.getItem(chatKey(id))) || []; } catch { return []; } }
-function saveChat(id, msgs) { localStorage.setItem(chatKey(id), JSON.stringify(msgs)); }
+function saveChat(id, msgs) { localStorage.setItem(chatKey(id), JSON.stringify(msgs)); scheduleSyncToGas(); }
+
+// ── GAS 클라우드 동기화 ────────────────────────────────────
+let _syncTimer = null;
+function scheduleSyncToGas() {
+  clearTimeout(_syncTimer);
+  _syncTimer = setTimeout(syncToGas, 2000);
+}
+
+function buildSyncData() {
+  const data = { office_employees: JSON.stringify(employees) };
+  employees.forEach(e => {
+    const msgs = loadChat(e.id);
+    if (msgs.length) data[chatKey(e.id)] = JSON.stringify(msgs);
+  });
+  return data;
+}
+
+async function syncToGas() {
+  if (!GAS_URL || !SECRET) return;
+  try {
+    await fetch(GAS_URL, {
+      method: 'POST',
+      body: JSON.stringify({ secretKey: SECRET, action: 'saveOfficeChatHistory', data: buildSyncData() })
+    });
+  } catch {}
+}
+
+async function syncFromGas() {
+  if (!GAS_URL || !SECRET) return;
+  const indicator = $('sync-indicator');
+  if (indicator) indicator.textContent = '☁ 불러오는 중…';
+  try {
+    const res = await fetch(GAS_URL, {
+      method: 'POST',
+      body: JSON.stringify({ secretKey: SECRET, action: 'loadOfficeChatHistory' })
+    });
+    const json = await res.json();
+    if (!json.success || !json.data) { if (indicator) indicator.textContent = ''; return; }
+    const data = json.data;
+    if (data.office_employees) {
+      try {
+        const emps = JSON.parse(data.office_employees);
+        if (Array.isArray(emps) && emps.length) { employees = emps; saveEmployees(); }
+      } catch {}
+    }
+    Object.keys(data).forEach(k => {
+      if (k.startsWith('office_chat_')) localStorage.setItem(k, data[k]);
+    });
+    if (indicator) indicator.textContent = '☁ 동기화됨';
+    setTimeout(() => { if (indicator) indicator.textContent = ''; }, 2000);
+    renderAll();
+  } catch {
+    if (indicator) indicator.textContent = '';
+  }
+}
 
 function loadLogs() { try { return JSON.parse(localStorage.getItem('office_logs')) || []; } catch { return []; } }
 function pushLog(entry) {
@@ -171,6 +226,7 @@ function clearChat(id) {
   if (!confirm('이 직원과의 대화를 모두 지울까요?')) return;
   localStorage.removeItem(chatKey(id));
   renderChat();
+  syncToGas();
 }
 
 // ── 직원 추가/수정 ────────────────────────────────────────
@@ -296,3 +352,4 @@ document.getElementById('office-modal-overlay').addEventListener('click', e => {
 });
 
 renderAll();
+syncFromGas();
