@@ -14,13 +14,13 @@
     theme: {
       extend: {
         colors: {
-          base: '#0b1220',
-          panel: '#111a2e',
-          panel2: '#0f1830',
-          line: '#1e293b',
-          signal: '#22c55e',
-          noise: '#f43f5e',
-          gold: '#eab308',
+          base: '#f8fafc',
+          panel: '#ffffff',
+          panel2: '#f1f5f9',
+          line: '#e2e8f0',
+          signal: '#16a34a',
+          noise: '#e11d48',
+          gold: '#ca8a04',
         },
         fontFamily: {
           sans: ['Inter', 'Noto Sans KR', 'sans-serif'],
@@ -34,56 +34,56 @@
   }
 </script>
 <style>
-  body { background: radial-gradient(ellipse at top, #131c33 0%, #0b1220 60%); }
+  body { background: linear-gradient(180deg, #ffffff 0%, #f8fafc 100%); }
   ::-webkit-scrollbar { width: 8px; height: 8px; }
-  ::-webkit-scrollbar-thumb { background: #263252; border-radius: 8px; }
-  .glass { background: linear-gradient(145deg, rgba(255,255,255,0.04), rgba(255,255,255,0.01)); border: 1px solid rgba(255,255,255,0.06); }
-  .tab-btn.active { color: #0b1220; background: linear-gradient(135deg,#e2e8f0,#94a3b8); box-shadow: 0 4px 20px -4px rgba(255,255,255,0.2); }
+  ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 8px; }
+  .glass { background: #ffffff; border: 1px solid #e2e8f0; box-shadow: 0 1px 2px rgba(15,23,42,0.03), 0 8px 24px -14px rgba(15,23,42,0.12); }
+  .tab-btn.active { color: #ffffff; background: linear-gradient(135deg,#1e293b,#0f172a); box-shadow: 0 4px 16px -4px rgba(15,23,42,0.35); }
   .tab-btn { transition: all .2s ease; }
-  .chip.active { border-color: #eab308; color: #eab308; background: rgba(234,179,8,0.08); }
+  .chip.active { border-color: #ca8a04; color: #ca8a04; background: rgba(202,138,4,0.08); }
   .fade-in { animation: fadeIn .35s ease both; }
   @keyframes fadeIn { from { opacity:0; transform: translateY(6px);} to {opacity:1; transform:none;} }
-  .grade-badge { text-shadow: 0 0 20px currentColor; }
-  .noise-bar { background: linear-gradient(90deg,#f43f5e,#fb7185); }
-  .signal-bar { background: linear-gradient(90deg,#22c55e,#4ade80); }
+  .grade-badge { }
+  .noise-bar { background: linear-gradient(90deg,#e11d48,#fb7185); }
+  .signal-bar { background: linear-gradient(90deg,#16a34a,#4ade80); }
   .ticker-scroll { animation: ticker 22s linear infinite; }
   @keyframes ticker { from { transform: translateX(0); } to { transform: translateX(-50%); } }
-  input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:16px; height:16px; border-radius:50%; background:#eab308; cursor:pointer; box-shadow:0 0 10px #eab308; }
+  input[type="range"]::-webkit-slider-thumb { -webkit-appearance:none; width:16px; height:16px; border-radius:50%; background:#ca8a04; cursor:pointer; box-shadow:0 0 10px rgba(202,138,4,0.5); }
   .stock-card { transition: all .18s ease; }
-  .stock-card.selected { border-color:#eab308; box-shadow: 0 0 0 1px #eab308, 0 8px 30px -8px rgba(234,179,8,0.35); }
+  .stock-card.selected { border-color:#ca8a04; box-shadow: 0 0 0 1px #ca8a04, 0 8px 24px -10px rgba(202,138,4,0.3); }
   .event-card { transition: all .18s ease; }
-  .event-card.selected { border-color:#38bdf8; background: rgba(56,189,248,0.06); }
+  .event-card.selected { border-color:#0284c7; background: rgba(2,132,199,0.05); }
   #toast { transition: all .3s ease; }
 </style>
 </head>
-<body class="text-slate-200 font-sans min-h-screen pb-24">
+<body class="text-slate-800 font-sans min-h-screen pb-24">
 
 <!-- ===================== HEADER / TICKER ===================== -->
-<header class="sticky top-0 z-40 backdrop-blur-md bg-[#0b1220]/85 border-b border-white/5">
+<header class="sticky top-0 z-40 backdrop-blur-md bg-white/90 border-b border-slate-200">
   <div class="max-w-7xl mx-auto px-4 sm:px-6 py-3 flex items-center justify-between gap-4">
     <div class="flex items-center gap-2.5">
-      <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-slate-200 to-slate-500 flex items-center justify-center shadow-glow">
-        <i class="fa-solid fa-wave-square text-[#0b1220] text-lg"></i>
+      <div class="w-9 h-9 rounded-xl bg-gradient-to-br from-slate-800 to-slate-950 flex items-center justify-center shadow-glow">
+        <i class="fa-solid fa-wave-square text-white text-lg"></i>
       </div>
       <div>
-        <div class="text-base sm:text-lg font-extrabold tracking-tight text-white leading-none">NOISE<span class="text-gold">OFF</span></div>
-        <div class="text-[10px] sm:text-xs text-slate-400 leading-none mt-0.5">뉴스는 사라지고, 펀더멘털은 남는다</div>
+        <div class="text-base sm:text-lg font-extrabold tracking-tight text-slate-900 leading-none">NOISE<span class="text-gold">OFF</span></div>
+        <div class="text-[10px] sm:text-xs text-slate-600 leading-none mt-0.5">뉴스는 사라지고, 펀더멘털은 남는다</div>
       </div>
     </div>
-    <nav class="hidden md:flex items-center gap-1 bg-white/5 rounded-full p-1 border border-white/5">
-      <button onclick="showTab('calc')" data-tab="calc" class="tab-btn active px-4 py-2 rounded-full text-sm font-semibold text-slate-300"><i class="fa-solid fa-calculator mr-1.5"></i>[1] 껄무새 계산기 데모</button>
-      <button onclick="showTab('tracker')" data-tab="tracker" class="tab-btn px-4 py-2 rounded-full text-sm font-semibold text-slate-300"><i class="fa-solid fa-magnifying-glass-chart mr-1.5"></i>[2] 전문가 타율 추적기 데모</button>
-      <button onclick="showTab('biz')" data-tab="biz" class="tab-btn px-4 py-2 rounded-full text-sm font-semibold text-slate-300"><i class="fa-solid fa-sack-dollar mr-1.5"></i>[3] 비즈니스 모델 & 유료화</button>
+    <nav class="hidden md:flex items-center gap-1 bg-slate-100 rounded-full p-1 border border-slate-200">
+      <button onclick="showTab('calc')" data-tab="calc" class="tab-btn active px-4 py-2 rounded-full text-sm font-semibold text-slate-700"><i class="fa-solid fa-calculator mr-1.5"></i>[1] 껄무새 계산기 데모</button>
+      <button onclick="showTab('tracker')" data-tab="tracker" class="tab-btn px-4 py-2 rounded-full text-sm font-semibold text-slate-700"><i class="fa-solid fa-magnifying-glass-chart mr-1.5"></i>[2] 전문가 타율 추적기 데모</button>
+      <button onclick="showTab('biz')" data-tab="biz" class="tab-btn px-4 py-2 rounded-full text-sm font-semibold text-slate-700"><i class="fa-solid fa-sack-dollar mr-1.5"></i>[3] 비즈니스 모델 & 유료화</button>
     </nav>
-    <button class="md:hidden text-slate-300 text-xl" onclick="document.getElementById('mnav').classList.toggle('hidden')"><i class="fa-solid fa-bars"></i></button>
+    <button class="md:hidden text-slate-700 text-xl" onclick="document.getElementById('mnav').classList.toggle('hidden')"><i class="fa-solid fa-bars"></i></button>
   </div>
   <div id="mnav" class="hidden md:!hidden px-4 pb-3 flex flex-col gap-1.5">
     <button onclick="showTab('calc')" data-tab="calc" class="tab-btn active px-4 py-2.5 rounded-lg text-sm font-semibold text-left"><i class="fa-solid fa-calculator mr-1.5"></i>[1] 껄무새 계산기 데모</button>
     <button onclick="showTab('tracker')" data-tab="tracker" class="tab-btn px-4 py-2.5 rounded-lg text-sm font-semibold text-left"><i class="fa-solid fa-magnifying-glass-chart mr-1.5"></i>[2] 전문가 타율 추적기 데모</button>
     <button onclick="showTab('biz')" data-tab="biz" class="tab-btn px-4 py-2.5 rounded-lg text-sm font-semibold text-left"><i class="fa-solid fa-sack-dollar mr-1.5"></i>[3] 비즈니스 모델 & 유료화</button>
   </div>
-  <div class="border-t border-white/5 bg-black/20 overflow-hidden whitespace-nowrap py-1.5">
-    <div class="ticker-scroll inline-flex gap-8 text-xs font-medium text-slate-400 px-4">
+  <div class="border-t border-slate-200 bg-slate-50 overflow-hidden whitespace-nowrap py-1.5">
+    <div class="ticker-scroll inline-flex gap-8 text-xs font-medium text-slate-500 px-4">
       <span>📉 <b class="text-noise">NVDA</b> 딥시크 쇼크 당일 -17% → 두 달 뒤 전고점 회복</span>
       <span>📰 "테슬라 상장폐지설" 유튜버 영상, 3개월 후 주가 +34%</span>
       <span>🔥 삼성전자 "반도체 겨울론" 보도 이후 6개월 수익률 +40%</span>
@@ -101,37 +101,37 @@
 <!-- ===================== TAB 1 : 껄무새 계산기 ===================== -->
 <section id="tab-calc" class="fade-in">
   <div class="mb-6">
-    <h1 class="text-2xl sm:text-3xl font-extrabold text-white">껄무새 계산기 <span class="text-slate-500 font-semibold text-lg">— The Regret Calculator</span></h1>
-    <p class="text-slate-400 text-sm sm:text-base mt-1.5">"그때 팔지 말 껄..." 과거 패닉 뉴스에 흔들려 팔았다면 얼마를 잃었을까? 실제와 유사한 시나리오로 나의 투자 멘탈을 진단해보세요.</p>
+    <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900">껄무새 계산기 <span class="text-slate-600 font-semibold text-lg">— The Regret Calculator</span></h1>
+    <p class="text-slate-500 text-sm sm:text-base mt-1.5">"그때 팔지 말 껄..." 과거 패닉 뉴스에 흔들려 팔았다면 얼마를 잃었을까? 실제와 유사한 시나리오로 나의 투자 멘탈을 진단해보세요.</p>
   </div>
 
   <div class="grid grid-cols-1 lg:grid-cols-12 gap-5">
     <!-- LEFT: selection panel -->
     <div class="lg:col-span-4 space-y-5">
       <div class="glass rounded-2xl p-5">
-        <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3"><i class="fa-solid fa-chart-simple mr-1.5 text-gold"></i>STEP 1 — 종목 선택</div>
+        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3"><i class="fa-solid fa-chart-simple mr-1.5 text-gold"></i>STEP 1 — 종목 선택</div>
         <div id="stockGrid" class="grid grid-cols-2 gap-2.5"></div>
       </div>
 
       <div class="glass rounded-2xl p-5">
-        <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3"><i class="fa-solid fa-bolt mr-1.5 text-gold"></i>STEP 2 — 패닉/노이즈 사건 선택</div>
+        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3"><i class="fa-solid fa-bolt mr-1.5 text-gold"></i>STEP 2 — 패닉/노이즈 사건 선택</div>
         <div id="eventList" class="space-y-2.5"></div>
       </div>
 
       <div class="glass rounded-2xl p-5">
-        <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3"><i class="fa-solid fa-won-sign mr-1.5 text-gold"></i>STEP 3 — 투자 금액 입력</div>
+        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mb-3"><i class="fa-solid fa-won-sign mr-1.5 text-gold"></i>STEP 3 — 투자 금액 입력</div>
         <div class="relative">
-          <span id="currencyPrefix" class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400 font-bold">$</span>
-          <input id="amountInput" type="text" inputmode="numeric" value="10,000" class="w-full bg-black/30 border border-white/10 rounded-xl pl-8 pr-3 py-3 text-lg font-bold text-white focus:outline-none focus:border-gold" oninput="onAmountInput(this)">
+          <span id="currencyPrefix" class="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-500 font-bold">$</span>
+          <input id="amountInput" type="text" inputmode="numeric" value="10,000" class="w-full bg-slate-100 border border-slate-200 rounded-xl pl-8 pr-3 py-3 text-lg font-bold text-slate-900 focus:outline-none focus:border-gold" oninput="onAmountInput(this)">
         </div>
         <div class="flex gap-2 mt-2.5">
-          <button onclick="quickAmount(1000)" class="quick-amt flex-1 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-semibold text-slate-300">1천</button>
-          <button onclick="quickAmount(5000)" class="quick-amt flex-1 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-semibold text-slate-300">5천</button>
-          <button onclick="quickAmount(10000)" class="quick-amt flex-1 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-semibold text-slate-300">1만</button>
-          <button onclick="quickAmount(50000)" class="quick-amt flex-1 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-xs font-semibold text-slate-300">5만</button>
+          <button onclick="quickAmount(1000)" class="quick-amt flex-1 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700">1천</button>
+          <button onclick="quickAmount(5000)" class="quick-amt flex-1 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700">5천</button>
+          <button onclick="quickAmount(10000)" class="quick-amt flex-1 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700">1만</button>
+          <button onclick="quickAmount(50000)" class="quick-amt flex-1 py-1.5 rounded-lg bg-slate-100 hover:bg-slate-200 text-xs font-semibold text-slate-700">5만</button>
         </div>
 
-        <div class="text-xs font-bold text-slate-400 uppercase tracking-wider mt-5 mb-3"><i class="fa-solid fa-hand mr-1.5 text-gold"></i>STEP 4 — 그때 당신의 선택은?</div>
+        <div class="text-xs font-bold text-slate-500 uppercase tracking-wider mt-5 mb-3"><i class="fa-solid fa-hand mr-1.5 text-gold"></i>STEP 4 — 그때 당신의 선택은?</div>
         <div class="grid grid-cols-2 gap-3">
           <button onclick="makeDecision('sell')" id="btnSell" class="py-3.5 rounded-xl border-2 border-noise/40 bg-noise/10 hover:bg-noise/20 font-bold text-noise transition"><i class="fa-solid fa-arrow-right-from-bracket mr-1.5"></i>패닉셀! 팔았다</button>
           <button onclick="makeDecision('hold')" id="btnHold" class="py-3.5 rounded-xl border-2 border-signal/40 bg-signal/10 hover:bg-signal/20 font-bold text-signal transition"><i class="fa-solid fa-hand-fist mr-1.5"></i>존버! 버텼다</button>
@@ -144,8 +144,8 @@
       <div class="glass rounded-2xl p-5">
         <div class="flex items-start justify-between flex-wrap gap-2 mb-2">
           <div>
-            <div id="chartStockName" class="text-lg font-extrabold text-white"></div>
-            <div id="chartEventName" class="text-sm text-slate-400 mt-0.5"></div>
+            <div id="chartStockName" class="text-lg font-extrabold text-slate-900"></div>
+            <div id="chartEventName" class="text-sm text-slate-500 mt-0.5"></div>
           </div>
           <div class="flex gap-2 text-xs">
             <span class="px-2.5 py-1 rounded-full bg-noise/10 border border-noise/30 text-noise font-semibold"><i class="fa-solid fa-square mr-1"></i>노이즈/패닉 구간</span>
@@ -156,9 +156,9 @@
       </div>
 
       <div id="resultPanel" class="glass rounded-2xl p-5 sm:p-6 min-h-[220px] flex items-center justify-center">
-        <div class="text-center text-slate-500">
+        <div class="text-center text-slate-600">
           <i class="fa-solid fa-chart-line text-4xl mb-3 opacity-40"></i>
-          <p class="text-sm">종목·사건·금액을 선택하고 <b class="text-slate-300">"팔았다" / "버텼다"</b>를 눌러보세요.</p>
+          <p class="text-sm">종목·사건·금액을 선택하고 <b class="text-slate-700">"팔았다" / "버텼다"</b>를 눌러보세요.</p>
         </div>
       </div>
     </div>
@@ -168,8 +168,8 @@
 <!-- ===================== TAB 2 : 전문가 타율 추적기 ===================== -->
 <section id="tab-tracker" class="fade-in hidden">
   <div class="mb-6">
-    <h1 class="text-2xl sm:text-3xl font-extrabold text-white">전문가 & 뉴스 타율 검증기 <span class="text-slate-500 font-semibold text-lg">— Track Record Verifier</span></h1>
-    <p class="text-slate-400 text-sm sm:text-base mt-1.5">1주일 전, 1개월 전, 6개월 전 "긴급! 초비상!" 헤드라인들. 지금 다시 보면 진짜 시그널이었을까, 그냥 노이즈였을까?</p>
+    <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900">전문가 & 뉴스 타율 검증기 <span class="text-slate-600 font-semibold text-lg">— Track Record Verifier</span></h1>
+    <p class="text-slate-500 text-sm sm:text-base mt-1.5">1주일 전, 1개월 전, 6개월 전 "긴급! 초비상!" 헤드라인들. 지금 다시 보면 진짜 시그널이었을까, 그냥 노이즈였을까?</p>
   </div>
 
   <!-- expert grid -->
@@ -177,12 +177,12 @@
 
   <!-- filter bar -->
   <div class="glass rounded-2xl p-4 sm:p-5 mb-5 flex flex-wrap items-center gap-3">
-    <span class="text-xs font-bold text-slate-400 uppercase tracking-wider mr-1"><i class="fa-solid fa-filter mr-1.5 text-gold"></i>기간 필터</span>
-    <button class="chip active px-4 py-1.5 rounded-full border border-white/10 text-sm font-semibold text-slate-300" data-filter="all" onclick="setTimeFilter('all')">전체</button>
-    <button class="chip px-4 py-1.5 rounded-full border border-white/10 text-sm font-semibold text-slate-300" data-filter="1week" onclick="setTimeFilter('1week')">1주일 전</button>
-    <button class="chip px-4 py-1.5 rounded-full border border-white/10 text-sm font-semibold text-slate-300" data-filter="1month" onclick="setTimeFilter('1month')">1개월 전</button>
-    <button class="chip px-4 py-1.5 rounded-full border border-white/10 text-sm font-semibold text-slate-300" data-filter="6month" onclick="setTimeFilter('6month')">6개월 전</button>
-    <span id="expertFilterTag" class="ml-auto text-xs text-slate-500 hidden">전문가 필터: <b id="expertFilterName" class="text-slate-300"></b> <button onclick="setExpertFilter(null)" class="text-noise ml-1"><i class="fa-solid fa-xmark"></i></button></span>
+    <span class="text-xs font-bold text-slate-500 uppercase tracking-wider mr-1"><i class="fa-solid fa-filter mr-1.5 text-gold"></i>기간 필터</span>
+    <button class="chip active px-4 py-1.5 rounded-full border border-slate-200 text-sm font-semibold text-slate-700" data-filter="all" onclick="setTimeFilter('all')">전체</button>
+    <button class="chip px-4 py-1.5 rounded-full border border-slate-200 text-sm font-semibold text-slate-700" data-filter="1week" onclick="setTimeFilter('1week')">1주일 전</button>
+    <button class="chip px-4 py-1.5 rounded-full border border-slate-200 text-sm font-semibold text-slate-700" data-filter="1month" onclick="setTimeFilter('1month')">1개월 전</button>
+    <button class="chip px-4 py-1.5 rounded-full border border-slate-200 text-sm font-semibold text-slate-700" data-filter="6month" onclick="setTimeFilter('6month')">6개월 전</button>
+    <span id="expertFilterTag" class="ml-auto text-xs text-slate-600 hidden">전문가 필터: <b id="expertFilterName" class="text-slate-700"></b> <button onclick="setExpertFilter(null)" class="text-noise ml-1"><i class="fa-solid fa-xmark"></i></button></span>
   </div>
 
   <div id="timelineList" class="space-y-4"></div>
@@ -191,33 +191,33 @@
 <!-- ===================== TAB 3 : 비즈니스 모델 ===================== -->
 <section id="tab-biz" class="fade-in hidden">
   <div class="mb-6">
-    <h1 class="text-2xl sm:text-3xl font-extrabold text-white">비즈니스 모델 & 유료화 구조</h1>
-    <p class="text-slate-400 text-sm sm:text-base mt-1.5">노이즈 캔슬링 엔진을 B2C 구독과 B2B API, 두 축으로 수익화하는 전략입니다.</p>
+    <h1 class="text-2xl sm:text-3xl font-extrabold text-slate-900">비즈니스 모델 & 유료화 구조</h1>
+    <p class="text-slate-500 text-sm sm:text-base mt-1.5">노이즈 캔슬링 엔진을 B2C 구독과 B2B API, 두 축으로 수익화하는 전략입니다.</p>
   </div>
 
   <!-- Pricing tiers -->
   <div class="grid grid-cols-1 md:grid-cols-3 gap-5 mb-10">
     <div class="glass rounded-2xl p-6 flex flex-col">
-      <div class="flex items-center gap-2 mb-1"><i class="fa-solid fa-seedling text-slate-400"></i><span class="text-sm font-bold text-slate-400 uppercase tracking-wider">Free</span></div>
-      <div class="text-3xl font-extrabold text-white mt-2">₩0<span class="text-sm font-medium text-slate-500">/월</span></div>
-      <p class="text-xs text-slate-500 mt-1 mb-5">노이즈에 낚이지 않는 첫걸음</p>
-      <ul class="space-y-3 text-sm text-slate-300 flex-1">
+      <div class="flex items-center gap-2 mb-1"><i class="fa-solid fa-seedling text-slate-500"></i><span class="text-sm font-bold text-slate-500 uppercase tracking-wider">Free</span></div>
+      <div class="text-3xl font-extrabold text-slate-900 mt-2">₩0<span class="text-sm font-medium text-slate-600">/월</span></div>
+      <p class="text-xs text-slate-600 mt-1 mb-5">노이즈에 낚이지 않는 첫걸음</p>
+      <ul class="space-y-3 text-sm text-slate-700 flex-1">
         <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>매크로 시장 노이즈 분석 (지연 데이터)</li>
         <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>공개 전문가 타율 Top 3 추적</li>
         <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>껄무새 계산기 무제한 이용</li>
-        <li class="flex gap-2 text-slate-600"><i class="fa-solid fa-xmark mt-0.5"></i>실시간 포트폴리오 알림 없음</li>
+        <li class="flex gap-2 text-slate-500"><i class="fa-solid fa-xmark mt-0.5"></i>실시간 포트폴리오 알림 없음</li>
       </ul>
-      <button class="mt-6 w-full py-2.5 rounded-xl bg-white/5 border border-white/10 font-semibold text-sm text-slate-300">현재 이용 중</button>
+      <button class="mt-6 w-full py-2.5 rounded-xl bg-slate-100 border border-slate-200 font-semibold text-sm text-slate-700">현재 이용 중</button>
     </div>
 
     <div class="glass rounded-2xl p-6 flex flex-col relative border-2 border-gold/50 shadow-goldglow">
       <span class="absolute -top-3 left-1/2 -translate-x-1/2 bg-gold text-[#0b1220] text-xs font-extrabold px-3 py-1 rounded-full">가장 인기</span>
       <div class="flex items-center gap-2 mb-1"><i class="fa-solid fa-bolt text-gold"></i><span class="text-sm font-bold text-gold uppercase tracking-wider">Pro</span></div>
-      <div class="text-3xl font-extrabold text-white mt-2">$9.99<span class="text-sm font-medium text-slate-500">/월</span></div>
-      <p class="text-xs text-slate-500 mt-1 mb-5">내 종목만 지켜보는 노이즈 필터</p>
-      <ul class="space-y-3 text-sm text-slate-300 flex-1">
+      <div class="text-3xl font-extrabold text-slate-900 mt-2">$9.99<span class="text-sm font-medium text-slate-600">/월</span></div>
+      <p class="text-xs text-slate-600 mt-1 mb-5">내 종목만 지켜보는 노이즈 필터</p>
+      <ul class="space-y-3 text-sm text-slate-700 flex-1">
         <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>개인 포트폴리오/관심종목 연동</li>
-        <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>실시간 "노이즈 알림"<br><span class="text-xs text-slate-500">"이 3% 하락은 단기 루머, 92%가 5일 내 해소"</span></li>
+        <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>실시간 "노이즈 알림"<br><span class="text-xs text-slate-600">"이 3% 하락은 단기 루머, 92%가 5일 내 해소"</span></li>
         <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>패닉 상황 대응 가이드 push</li>
         <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>월간 "안 팔길 잘했다" 리포트</li>
       </ul>
@@ -226,15 +226,15 @@
 
     <div class="glass rounded-2xl p-6 flex flex-col">
       <div class="flex items-center gap-2 mb-1"><i class="fa-solid fa-crosshairs text-noise"></i><span class="text-sm font-bold text-noise uppercase tracking-wider">Expert Sniper</span></div>
-      <div class="text-3xl font-extrabold text-white mt-2">$19.99<span class="text-sm font-medium text-slate-500">/월</span></div>
-      <p class="text-xs text-slate-500 mt-1 mb-5">모든 전문가의 민낯을 공개</p>
-      <ul class="space-y-3 text-sm text-slate-300 flex-1">
+      <div class="text-3xl font-extrabold text-slate-900 mt-2">$19.99<span class="text-sm font-medium text-slate-600">/월</span></div>
+      <p class="text-xs text-slate-600 mt-1 mb-5">모든 전문가의 민낯을 공개</p>
+      <ul class="space-y-3 text-sm text-slate-700 flex-1">
         <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>모든 유튜버·인플루언서 타율 DB 전체 열람</li>
         <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>실시간 감정분석 자동 트래킹</li>
         <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>종목별 "지금 이 뉴스, 신뢰도 몇%?" 스코어</li>
         <li class="flex gap-2"><i class="fa-solid fa-check text-signal mt-0.5"></i>Pro 기능 전체 포함</li>
       </ul>
-      <button class="mt-6 w-full py-2.5 rounded-xl bg-white/5 border border-noise/40 text-noise font-bold text-sm">Sniper 시작하기</button>
+      <button class="mt-6 w-full py-2.5 rounded-xl bg-slate-100 border border-noise/40 text-noise font-bold text-sm">Sniper 시작하기</button>
     </div>
   </div>
 
@@ -242,8 +242,8 @@
   <div class="glass rounded-2xl p-5 sm:p-6 mb-10">
     <div class="flex items-center justify-between flex-wrap gap-2 mb-4">
       <div>
-        <h3 class="font-bold text-white"><i class="fa-solid fa-chart-column text-gold mr-2"></i>12개월 구독자·매출 성장 시뮬레이션 (예시)</h3>
-        <p class="text-xs text-slate-500 mt-1">Free → Pro 전환율 4%, Pro → Sniper 전환율 15% 가정 시나리오</p>
+        <h3 class="font-bold text-slate-900"><i class="fa-solid fa-chart-column text-gold mr-2"></i>12개월 구독자·매출 성장 시뮬레이션 (예시)</h3>
+        <p class="text-xs text-slate-600 mt-1">Free → Pro 전환율 4%, Pro → Sniper 전환율 15% 가정 시나리오</p>
       </div>
       <div class="flex gap-3 text-xs">
         <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-full bg-slate-500 inline-block"></span>Free 사용자</span>
@@ -256,42 +256,42 @@
   <!-- B2B section -->
   <div class="grid grid-cols-1 lg:grid-cols-2 gap-5">
     <div class="glass rounded-2xl p-6">
-      <div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-building-columns text-sky-400 text-lg"></i><h3 class="font-bold text-white text-lg">B2B — MTS 통합 API 판매</h3></div>
-      <p class="text-sm text-slate-400 leading-relaxed mb-4">"노이즈 캔슬링 엔진"을 토스증권, 키움증권 등 기존 MTS(Mobile Trading System)에 API로 공급합니다. 거래 화면에 <b class="text-white">"과거 유사 뉴스 결과 보기"</b> 버튼을 심어 패닉 매도를 줄이고 리테일 투자자의 체류/거래 리텐션을 높입니다.</p>
-      <ul class="space-y-2.5 text-sm text-slate-300 mb-5">
-        <li class="flex gap-2"><i class="fa-solid fa-plug text-sky-400 mt-1"></i>REST API + Webhook, 종목코드 기반 실시간 노이즈 스코어 제공</li>
-        <li class="flex gap-2"><i class="fa-solid fa-plug text-sky-400 mt-1"></i>사용량 기반 과금 (Call당 과금 + 증권사 MAU 티어제)</li>
-        <li class="flex gap-2"><i class="fa-solid fa-plug text-sky-400 mt-1"></i>화이트라벨 위젯 형태로 앱 내 삽입, 브랜딩 커스터마이징</li>
+      <div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-building-columns text-sky-600 text-lg"></i><h3 class="font-bold text-slate-900 text-lg">B2B — MTS 통합 API 판매</h3></div>
+      <p class="text-sm text-slate-500 leading-relaxed mb-4">"노이즈 캔슬링 엔진"을 토스증권, 키움증권 등 기존 MTS(Mobile Trading System)에 API로 공급합니다. 거래 화면에 <b class="text-slate-900">"과거 유사 뉴스 결과 보기"</b> 버튼을 심어 패닉 매도를 줄이고 리테일 투자자의 체류/거래 리텐션을 높입니다.</p>
+      <ul class="space-y-2.5 text-sm text-slate-700 mb-5">
+        <li class="flex gap-2"><i class="fa-solid fa-plug text-sky-600 mt-1"></i>REST API + Webhook, 종목코드 기반 실시간 노이즈 스코어 제공</li>
+        <li class="flex gap-2"><i class="fa-solid fa-plug text-sky-600 mt-1"></i>사용량 기반 과금 (Call당 과금 + 증권사 MAU 티어제)</li>
+        <li class="flex gap-2"><i class="fa-solid fa-plug text-sky-600 mt-1"></i>화이트라벨 위젯 형태로 앱 내 삽입, 브랜딩 커스터마이징</li>
       </ul>
       <!-- mock phone widget -->
-      <div class="bg-black/30 rounded-2xl p-4 border border-white/10 max-w-xs mx-auto">
-        <div class="flex items-center justify-between text-xs text-slate-400 mb-3"><span>토스증권</span><span>NVDA · 매도 주문</span></div>
+      <div class="bg-slate-100 rounded-2xl p-4 border border-slate-200 max-w-xs mx-auto">
+        <div class="flex items-center justify-between text-xs text-slate-500 mb-3"><span>토스증권</span><span>NVDA · 매도 주문</span></div>
         <div class="bg-noise/10 border border-noise/30 rounded-xl p-3 text-xs">
           <div class="flex items-center gap-1.5 text-noise font-bold mb-1"><i class="fa-solid fa-triangle-exclamation"></i>단기 급락 감지 (-4.2%)</div>
-          <p class="text-slate-300 leading-relaxed">유사 뉴스 12건 중 <b class="text-signal">92%</b>가 5일 내 원상 회복했습니다.</p>
-          <button class="mt-2 w-full py-1.5 rounded-lg bg-white/10 text-slate-200 font-semibold">과거 유사 사례 결과보기 →</button>
+          <p class="text-slate-700 leading-relaxed">유사 뉴스 12건 중 <b class="text-signal">92%</b>가 5일 내 원상 회복했습니다.</p>
+          <button class="mt-2 w-full py-1.5 rounded-lg bg-slate-100 text-slate-800 font-semibold">과거 유사 사례 결과보기 →</button>
         </div>
       </div>
     </div>
 
     <div class="glass rounded-2xl p-6">
-      <div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-database text-violet-400 text-lg"></i><h3 class="font-bold text-white text-lg">B2B — 데이터 라이선싱</h3></div>
-      <p class="text-sm text-slate-400 leading-relaxed mb-4">축적된 "헤드라인 → 실제 주가 반응" 라벨링 데이터셋을 헤지펀드, 퀀트 리서치, 금융 AI 스타트업에 라이선스합니다.</p>
+      <div class="flex items-center gap-2 mb-3"><i class="fa-solid fa-database text-violet-600 text-lg"></i><h3 class="font-bold text-slate-900 text-lg">B2B — 데이터 라이선싱</h3></div>
+      <p class="text-sm text-slate-500 leading-relaxed mb-4">축적된 "헤드라인 → 실제 주가 반응" 라벨링 데이터셋을 헤지펀드, 퀀트 리서치, 금융 AI 스타트업에 라이선스합니다.</p>
       <div class="space-y-3">
-        <div class="flex items-center justify-between bg-black/20 rounded-xl p-3.5">
-          <div><div class="text-sm font-semibold text-white">노이즈 라벨링 데이터셋</div><div class="text-xs text-slate-500">헤드라인 + 가격반응 페어 12만 건+</div></div>
+        <div class="flex items-center justify-between bg-slate-50 rounded-xl p-3.5">
+          <div><div class="text-sm font-semibold text-slate-900">노이즈 라벨링 데이터셋</div><div class="text-xs text-slate-600">헤드라인 + 가격반응 페어 12만 건+</div></div>
           <div class="text-sm font-bold text-gold">$2,000+/월</div>
         </div>
-        <div class="flex items-center justify-between bg-black/20 rounded-xl p-3.5">
-          <div><div class="text-sm font-semibold text-white">전문가 신뢰도 스코어링 API</div><div class="text-xs text-slate-500">인플루언서 5,000+ 실시간 타율</div></div>
+        <div class="flex items-center justify-between bg-slate-50 rounded-xl p-3.5">
+          <div><div class="text-sm font-semibold text-slate-900">전문가 신뢰도 스코어링 API</div><div class="text-xs text-slate-600">인플루언서 5,000+ 실시간 타율</div></div>
           <div class="text-sm font-bold text-gold">$5,000+/월</div>
         </div>
-        <div class="flex items-center justify-between bg-black/20 rounded-xl p-3.5">
-          <div><div class="text-sm font-semibold text-white">증권사 화이트라벨 위젯</div><div class="text-xs text-slate-500">MAU 티어 기반 계약</div></div>
+        <div class="flex items-center justify-between bg-slate-50 rounded-xl p-3.5">
+          <div><div class="text-sm font-semibold text-slate-900">증권사 화이트라벨 위젯</div><div class="text-xs text-slate-600">MAU 티어 기반 계약</div></div>
           <div class="text-sm font-bold text-gold">협의 (Enterprise)</div>
         </div>
       </div>
-      <div class="mt-5 pt-4 border-t border-white/10 text-xs text-slate-500 leading-relaxed">
+      <div class="mt-5 pt-4 border-t border-slate-200 text-xs text-slate-600 leading-relaxed">
         <i class="fa-solid fa-lightbulb text-gold mr-1.5"></i>핵심 방어력(moat): 시간이 지날수록 "헤드라인-결과" 라벨링 데이터가 누적되어 경쟁사가 단기간에 복제할 수 없는 데이터 해자(data moat)가 형성됩니다.
       </div>
     </div>
@@ -302,7 +302,7 @@
 
 </main>
 
-<div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 translate-y-24 opacity-0 bg-slate-100 text-[#0b1220] font-semibold text-sm px-5 py-3 rounded-full shadow-2xl z-50 flex items-center gap-2">
+<div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 translate-y-24 opacity-0 bg-slate-900 text-white font-semibold text-sm px-5 py-3 rounded-full shadow-2xl z-50 flex items-center gap-2">
   <i class="fa-solid fa-circle-check text-signal"></i><span id="toastMsg"></span>
 </div>
 
@@ -383,9 +383,9 @@ function renderStockGrid(){
   el.innerHTML = Object.keys(STOCKS).map(key=>{
     const s = STOCKS[key];
     const sel = key===calcState.stockKey;
-    return `<button onclick="selectStock('${key}')" class="stock-card ${sel?'selected':''} text-left p-3 rounded-xl border border-white/10 bg-black/20 hover:bg-black/30">
-      <div class="flex items-center gap-2 mb-1"><i class="fa-solid ${s.icon}" style="color:${s.color}"></i><span class="font-bold text-white text-sm">${s.koName}</span></div>
-      <div class="text-[11px] text-slate-500">${s.ticker} · ${s.currency}</div>
+    return `<button onclick="selectStock('${key}')" class="stock-card ${sel?'selected':''} text-left p-3 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100">
+      <div class="flex items-center gap-2 mb-1"><i class="fa-solid ${s.icon}" style="color:${s.color}"></i><span class="font-bold text-slate-900 text-sm">${s.koName}</span></div>
+      <div class="text-[11px] text-slate-600">${s.ticker} · ${s.currency}</div>
     </button>`;
   }).join('');
 }
@@ -395,13 +395,13 @@ function renderEventList(){
   const el = document.getElementById('eventList');
   el.innerHTML = s.events.map((ev,i)=>{
     const sel = i===calcState.eventIndex;
-    return `<button onclick="selectEvent(${i})" class="event-card ${sel?'selected':''} w-full text-left p-3.5 rounded-xl border border-white/10 bg-black/20 hover:bg-black/30">
+    return `<button onclick="selectEvent(${i})" class="event-card ${sel?'selected':''} w-full text-left p-3.5 rounded-xl border border-slate-200 bg-slate-50 hover:bg-slate-100">
       <div class="flex items-center justify-between mb-1">
-        <span class="text-xs font-bold text-sky-400">${ev.date}</span>
+        <span class="text-xs font-bold text-sky-600">${ev.date}</span>
         <span class="text-xs font-bold text-noise">${(((ev.low-ev.before)/ev.before)*100).toFixed(1)}%</span>
       </div>
-      <div class="text-sm font-semibold text-white">${ev.label}</div>
-      <div class="text-xs text-slate-500 mt-1 leading-snug">${ev.desc}</div>
+      <div class="text-sm font-semibold text-slate-900">${ev.label}</div>
+      <div class="text-xs text-slate-600 mt-1 leading-snug">${ev.desc}</div>
     </button>`;
   }).join('');
 }
@@ -439,9 +439,9 @@ function onAmountInput(el){
 function resetResultPanel(){
   document.getElementById('btnSell').classList.remove('ring-4','ring-noise');
   document.getElementById('btnHold').classList.remove('ring-4','ring-signal');
-  document.getElementById('resultPanel').innerHTML = `<div class="text-center text-slate-500">
+  document.getElementById('resultPanel').innerHTML = `<div class="text-center text-slate-600">
       <i class="fa-solid fa-chart-line text-4xl mb-3 opacity-40"></i>
-      <p class="text-sm">종목·사건·금액을 선택하고 <b class="text-slate-300">"팔았다" / "버텼다"</b>를 눌러보세요.</p>
+      <p class="text-sm">종목·사건·금액을 선택하고 <b class="text-slate-700">"팔았다" / "버텼다"</b>를 눌러보세요.</p>
     </div>`;
 }
 
@@ -486,10 +486,10 @@ const noiseZonePlugin = {
     ctx.fillStyle = 'rgba(56,189,248,0.06)';
     ctx.fillRect(x2, chartArea.top, chartArea.right-x2, chartArea.bottom-chartArea.top);
     ctx.font = '600 10px Inter, sans-serif';
-    ctx.fillStyle = '#fb7185';
+    ctx.fillStyle = '#e11d48';
     ctx.textAlign = 'center';
     ctx.fillText('패닉 / 노이즈 구간', (x1+x2)/2, chartArea.top+14);
-    ctx.fillStyle = '#38bdf8';
+    ctx.fillStyle = '#0284c7';
     ctx.fillText('회복 & 추세 구간', (x2+chartArea.right)/2, chartArea.top+14);
     ctx.restore();
   }
@@ -505,8 +505,8 @@ function updateChart(){
   const { data, labels, eventIdx, lowIdx, recoverIdx, n } = generateSeries(ev.before, ev.low, s.current);
   const pointRadius = new Array(n+1).fill(0);
   const pointColor = new Array(n+1).fill('#22c55e');
-  pointRadius[lowIdx]=6; pointColor[lowIdx]='#f43f5e';
-  pointRadius[n]=6; pointColor[n]='#eab308';
+  pointRadius[lowIdx]=6; pointColor[lowIdx]='#e11d48';
+  pointRadius[n]=6; pointColor[n]='#ca8a04';
 
   const ctx = document.getElementById('priceChart').getContext('2d');
   const gradient = ctx.createLinearGradient(0,0,0,280);
@@ -521,7 +521,7 @@ function updateChart(){
       datasets:[{
         label:`${s.ticker} 주가`,
         data,
-        borderColor:'#5eead4',
+        borderColor:'#0d9488',
         backgroundColor:gradient,
         fill:true,
         tension:0.35,
@@ -538,14 +538,14 @@ function updateChart(){
         legend:{ display:false },
         noiseZone:{ startIndex:eventIdx, endIndex:recoverIdx },
         tooltip:{
-          backgroundColor:'#111a2e', borderColor:'#334155', borderWidth:1, padding:10,
-          titleColor:'#e2e8f0', bodyColor:'#cbd5e1',
+          backgroundColor:'#ffffff', borderColor:'#cbd5e1', borderWidth:1, padding:10,
+          titleColor:'#0f172a', bodyColor:'#334155',
           callbacks:{ label:(c)=> ' ' + fmtMoney(c.parsed.y, s.currency) }
         }
       },
       scales:{
-        x:{ grid:{ color:'rgba(255,255,255,0.04)' }, ticks:{ color:'#64748b', font:{size:10}, autoSkip:false, callback:(v,i)=> labels[i] || '' } },
-        y:{ grid:{ color:'rgba(255,255,255,0.04)' }, ticks:{ color:'#64748b', font:{size:10}, callback:(v)=> currencySymbol(s.currency)+Number(v).toLocaleString('en-US') } }
+        x:{ grid:{ color:'rgba(0,0,0,0.06)' }, ticks:{ color:'#475569', font:{size:10}, autoSkip:false, callback:(v,i)=> labels[i] || '' } },
+        y:{ grid:{ color:'rgba(0,0,0,0.06)' }, ticks:{ color:'#475569', font:{size:10}, callback:(v)=> currencySymbol(s.currency)+Number(v).toLocaleString('en-US') } }
       }
     }
   });
@@ -553,13 +553,13 @@ function updateChart(){
 
 function gradeFor(decision, ratio){
   if(decision==='sell'){
-    if(ratio>0.5) return { title:'패닉셀 개미 (Paper Hands Ant)', emoji:'🐜', color:'#f43f5e', desc:'노이즈 뉴스 한 방에 흔들려 저점에서 던졌습니다. 다음엔 뉴스보다 차트를 한 번 더 보세요.' };
-    if(ratio>0.2) return { title:'흔들리는 갈대 (Wavering Reed)', emoji:'🌾', color:'#fb923c', desc:'조금 아쉬운 타이밍의 손절이었지만, 패닉의 강도를 생각하면 이해할 만합니다.' };
-    return { title:'합리적 손절러 (Rational Cutter)', emoji:'✂️', color:'#facc15', desc:'큰 후회는 없는 손절! 다만 노이즈성 이벤트였다는 점은 기억해두세요.' };
+    if(ratio>0.5) return { title:'패닉셀 개미 (Paper Hands Ant)', emoji:'🐜', color:'#e11d48', desc:'노이즈 뉴스 한 방에 흔들려 저점에서 던졌습니다. 다음엔 뉴스보다 차트를 한 번 더 보세요.' };
+    if(ratio>0.2) return { title:'흔들리는 갈대 (Wavering Reed)', emoji:'🌾', color:'#c2410c', desc:'조금 아쉬운 타이밍의 손절이었지만, 패닉의 강도를 생각하면 이해할 만합니다.' };
+    return { title:'합리적 손절러 (Rational Cutter)', emoji:'✂️', color:'#a16207', desc:'큰 후회는 없는 손절! 다만 노이즈성 이벤트였다는 점은 기억해두세요.' };
   } else {
-    if(ratio>0.5) return { title:'다이아몬드 손 버핏 (Diamond Hands Buffett)', emoji:'💎', color:'#22c55e', desc:'역대급 존버! 뉴스에 흔들리지 않고 펀더멘털을 믿은 결과입니다.' };
-    if(ratio>0.2) return { title:'존버의 신 (Hodl God)', emoji:'🧘', color:'#4ade80', desc:'꽤 훌륭한 멘탈 관리! 노이즈에 크게 흔들리지 않았습니다.' };
-    return { title:'담담한 장기투자자 (Calm Long-termist)', emoji:'🌊', color:'#67e8f9', desc:'무난하게 잘 버텼습니다. 노이즈는 결국 지나간다는 걸 증명했네요.' };
+    if(ratio>0.5) return { title:'다이아몬드 손 버핏 (Diamond Hands Buffett)', emoji:'💎', color:'#16a34a', desc:'역대급 존버! 뉴스에 흔들리지 않고 펀더멘털을 믿은 결과입니다.' };
+    if(ratio>0.2) return { title:'존버의 신 (Hodl God)', emoji:'🧘', color:'#15803d', desc:'꽤 훌륭한 멘탈 관리! 노이즈에 크게 흔들리지 않았습니다.' };
+    return { title:'담담한 장기투자자 (Calm Long-termist)', emoji:'🌊', color:'#0e7490', desc:'무난하게 잘 버텼습니다. 노이즈는 결국 지나간다는 걸 증명했네요.' };
   }
 }
 
@@ -588,13 +588,13 @@ function makeDecision(decision){
         <div>
           <div class="text-xs font-bold text-noise uppercase tracking-wider mb-1">The Regret Index — 놓친 수익</div>
           <div class="text-4xl font-extrabold text-noise">-${fmtMoney(regret, s.currency)}</div>
-          <p class="text-sm text-slate-400 mt-2 leading-relaxed">패닉 저점 <b>${fmtMoney(ev.low,s.currency)}</b>에서 매도하지 않고 오늘 <b>${fmtMoney(s.current,s.currency)}</b>까지 버텼다면 얻었을 수익입니다. (종목 총 상승률 <b class="text-slate-200">${totalReturnPct.toFixed(1)}%</b>)</p>
-          <button onclick="shareResult()" class="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-sm font-semibold text-slate-200"><i class="fa-solid fa-share-nodes"></i>결과 공유하기</button>
+          <p class="text-sm text-slate-500 mt-2 leading-relaxed">패닉 저점 <b>${fmtMoney(ev.low,s.currency)}</b>에서 매도하지 않고 오늘 <b>${fmtMoney(s.current,s.currency)}</b>까지 버텼다면 얻었을 수익입니다. (종목 총 상승률 <b class="text-slate-800">${totalReturnPct.toFixed(1)}%</b>)</p>
+          <button onclick="shareResult()" class="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-sm font-semibold text-slate-800"><i class="fa-solid fa-share-nodes"></i>결과 공유하기</button>
         </div>
         <div class="text-center rounded-2xl border-2 p-5" style="border-color:${grade.color}55; background:${grade.color}0f;">
           <div class="text-5xl mb-2">${grade.emoji}</div>
           <div class="grade-badge text-lg font-extrabold" style="color:${grade.color}">${grade.title}</div>
-          <p class="text-xs text-slate-400 mt-2 leading-relaxed">${grade.desc}</p>
+          <p class="text-xs text-slate-500 mt-2 leading-relaxed">${grade.desc}</p>
         </div>
       </div>`;
   } else {
@@ -603,13 +603,13 @@ function makeDecision(decision){
         <div>
           <div class="text-xs font-bold text-signal uppercase tracking-wider mb-1">The Regret Index — 노이즈로부터 지켜낸 수익</div>
           <div class="text-4xl font-extrabold text-signal">+${fmtMoney(regret, s.currency)}</div>
-          <p class="text-sm text-slate-400 mt-2 leading-relaxed">패닉에 흔들려 저점 <b>${fmtMoney(ev.low,s.currency)}</b>에서 팔지 않고 버틴 덕분에, 오늘 <b>${fmtMoney(s.current,s.currency)}</b>까지 지켜낸 수익입니다. (종목 총 상승률 <b class="text-slate-200">${totalReturnPct.toFixed(1)}%</b>)</p>
-          <button onclick="shareResult()" class="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/10 hover:bg-white/20 text-sm font-semibold text-slate-200"><i class="fa-solid fa-share-nodes"></i>결과 공유하기</button>
+          <p class="text-sm text-slate-500 mt-2 leading-relaxed">패닉에 흔들려 저점 <b>${fmtMoney(ev.low,s.currency)}</b>에서 팔지 않고 버틴 덕분에, 오늘 <b>${fmtMoney(s.current,s.currency)}</b>까지 지켜낸 수익입니다. (종목 총 상승률 <b class="text-slate-800">${totalReturnPct.toFixed(1)}%</b>)</p>
+          <button onclick="shareResult()" class="mt-4 inline-flex items-center gap-2 px-4 py-2 rounded-full bg-slate-100 hover:bg-slate-200 text-sm font-semibold text-slate-800"><i class="fa-solid fa-share-nodes"></i>결과 공유하기</button>
         </div>
         <div class="text-center rounded-2xl border-2 p-5" style="border-color:${grade.color}55; background:${grade.color}0f;">
           <div class="text-5xl mb-2">${grade.emoji}</div>
           <div class="grade-badge text-lg font-extrabold" style="color:${grade.color}">${grade.title}</div>
-          <p class="text-xs text-slate-400 mt-2 leading-relaxed">${grade.desc}</p>
+          <p class="text-xs text-slate-500 mt-2 leading-relaxed">${grade.desc}</p>
         </div>
       </div>`;
   }
@@ -634,7 +634,7 @@ function shareResult(){
 ============================================================ */
 const EXPERTS = [
   {
-    id:'exp1', name:'돈복사 유튜버 K', sub:'구독자 82만 · 급등주 리딩', tag:'클릭베이트 마스터', tagColor:'#eab308', hitRate:18,
+    id:'exp1', name:'돈복사 유튜버 K', sub:'구독자 82만 · 급등주 리딩', tag:'클릭베이트 마스터', tagColor:'#ca8a04', hitRate:18,
     icon:'fa-fire', avatarBg:'#78350f',
     calls:[
       { tf:'1week', ago:'1주일 전', headline:'"지금 안 사면 벼락거지 확정! 엔비디아 200달러 뚫는다"', stock:'NVDA', outcome:'noise', change:-4.8, verify:'실제로는 발표 후 4.8% 하락. 근거 없는 급등 선동으로 확인' },
@@ -643,7 +643,7 @@ const EXPERTS = [
     ]
   },
   {
-    id:'exp2', name:'정석 경제채널 P', sub:'구독자 45만 · 데이터 기반 분석', tag:'신뢰 시그널', tagColor:'#22c55e', hitRate:81,
+    id:'exp2', name:'정석 경제채널 P', sub:'구독자 45만 · 데이터 기반 분석', tag:'신뢰 시그널', tagColor:'#16a34a', hitRate:81,
     icon:'fa-chart-line', avatarBg:'#14532d',
     calls:[
       { tf:'1week', ago:'1주일 전', headline:'"엔비디아 단기 조정 있으나 AI 수요 펀더멘털 훼손 없음"', stock:'NVDA', outcome:'signal', change:6.1, verify:'예측대로 단기 조정 후 반등, 펀더멘털 유지 확인' },
@@ -652,7 +652,7 @@ const EXPERTS = [
     ]
   },
   {
-    id:'exp3', name:'속보 전문 매체 데일리 M', sub:'온라인 경제매체', tag:'노이즈 생성기', tagColor:'#f43f5e', hitRate:25,
+    id:'exp3', name:'속보 전문 매체 데일리 M', sub:'온라인 경제매체', tag:'노이즈 생성기', tagColor:'#e11d48', hitRate:25,
     icon:'fa-newspaper', avatarBg:'#7f1d1d',
     calls:[
       { tf:'1week', ago:'1주일 전', headline:'"[긴급] 테슬라 리콜 사태, 안전성 붕괴 초비상"', stock:'TSLA', outcome:'noise', change:8.4, verify:'리콜 이후 안전성 이슈 없이 8.4% 반등' },
@@ -661,7 +661,7 @@ const EXPERTS = [
     ]
   },
   {
-    id:'exp4', name:'국내 3대 증권사 리서치센터', sub:'기관 애널리스트 리포트', tag:'신뢰 시그널', tagColor:'#22c55e', hitRate:74,
+    id:'exp4', name:'국내 3대 증권사 리서치센터', sub:'기관 애널리스트 리포트', tag:'신뢰 시그널', tagColor:'#16a34a', hitRate:74,
     icon:'fa-building', avatarBg:'#0c4a6e',
     calls:[
       { tf:'1week', ago:'1주일 전', headline:'"단기 노이즈로 인한 하락, 저가 매수 기회로 판단"', stock:'AAPL', outcome:'signal', change:5.2, verify:'권고대로 이후 5.2% 반등' },
@@ -670,7 +670,7 @@ const EXPERTS = [
     ]
   },
   {
-    id:'exp5', name:'급등주 전문 리딩방 리더 J', sub:'유료 리딩방 운영', tag:'노이즈 생성기', tagColor:'#f43f5e', hitRate:15,
+    id:'exp5', name:'급등주 전문 리딩방 리더 J', sub:'유료 리딩방 운영', tag:'노이즈 생성기', tagColor:'#e11d48', hitRate:15,
     icon:'fa-bullhorn', avatarBg:'#7f1d1d',
     calls:[
       { tf:'1week', ago:'1주일 전', headline:'"엔비디아 이번 조정 못 버티면 -50% 더 간다, 전량 매도!"', stock:'NVDA', outcome:'noise', change:6.1, verify:'추가 하락 없이 6.1% 반등, 근거 없는 공포 조장' },
@@ -687,12 +687,12 @@ function renderExpertGrid(){
   el.innerHTML = EXPERTS.map(ex=>{
     const noiseRate = 100-ex.hitRate;
     const active = trackerState.expertFilter===ex.id;
-    return `<div onclick="setExpertFilter('${ex.id}')" class="glass rounded-2xl p-5 cursor-pointer hover:border-white/20 transition ${active?'ring-2 ring-sky-400':''}">
+    return `<div onclick="setExpertFilter('${ex.id}')" class="glass rounded-2xl p-5 cursor-pointer hover:border-slate-300 transition ${active?'ring-2 ring-sky-400':''}">
       <div class="flex items-center gap-3 mb-3">
-        <div class="w-11 h-11 rounded-full flex items-center justify-center text-lg" style="background:${ex.avatarBg}"><i class="fa-solid ${ex.icon}"></i></div>
+        <div class="w-11 h-11 rounded-full flex items-center justify-center text-lg text-white" style="background:${ex.avatarBg}"><i class="fa-solid ${ex.icon}"></i></div>
         <div class="flex-1 min-w-0">
-          <div class="font-bold text-white text-sm truncate">${ex.name}</div>
-          <div class="text-xs text-slate-500 truncate">${ex.sub}</div>
+          <div class="font-bold text-slate-900 text-sm truncate">${ex.name}</div>
+          <div class="text-xs text-slate-600 truncate">${ex.sub}</div>
         </div>
         <span class="text-[10px] font-bold px-2 py-1 rounded-full shrink-0" style="color:${ex.tagColor}; background:${ex.tagColor}1a; border:1px solid ${ex.tagColor}55;">${ex.tag}</span>
       </div>
@@ -700,7 +700,7 @@ function renderExpertGrid(){
         <span class="text-signal font-semibold">시그널 적중 ${ex.hitRate}%</span>
         <span class="text-noise font-semibold">노이즈 ${noiseRate}%</span>
       </div>
-      <div class="w-full h-2.5 rounded-full bg-black/30 overflow-hidden flex">
+      <div class="w-full h-2.5 rounded-full bg-slate-100 overflow-hidden flex">
         <div class="signal-bar h-full" style="width:${ex.hitRate}%"></div>
         <div class="noise-bar h-full" style="width:${noiseRate}%"></div>
       </div>
@@ -740,27 +740,27 @@ function renderTimeline(){
   });
 
   if(cards.length===0){
-    el.innerHTML = `<div class="glass rounded-2xl p-10 text-center text-slate-500"><i class="fa-solid fa-inbox text-3xl mb-2 opacity-40"></i><p>조건에 맞는 기록이 없습니다.</p></div>`;
+    el.innerHTML = `<div class="glass rounded-2xl p-10 text-center text-slate-600"><i class="fa-solid fa-inbox text-3xl mb-2 opacity-40"></i><p>조건에 맞는 기록이 없습니다.</p></div>`;
     return;
   }
 
   el.innerHTML = cards.map(({ex,c})=>{
     const isSignal = c.outcome==='signal';
     return `<div class="glass rounded-2xl p-5 fade-in">
-      <div class="flex items-center gap-2 mb-3 text-xs text-slate-500">
-        <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px]" style="background:${ex.avatarBg}"><i class="fa-solid ${ex.icon}"></i></div>
-        <span class="font-semibold text-slate-300">${ex.name}</span>
+      <div class="flex items-center gap-2 mb-3 text-xs text-slate-600">
+        <div class="w-6 h-6 rounded-full flex items-center justify-center text-[10px] text-white" style="background:${ex.avatarBg}"><i class="fa-solid ${ex.icon}"></i></div>
+        <span class="font-semibold text-slate-700">${ex.name}</span>
         <span>·</span><span>${c.ago}</span>
-        <span class="ml-auto font-mono text-slate-400">${c.stock}</span>
+        <span class="ml-auto font-mono text-slate-500">${c.stock}</span>
       </div>
       <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-        <div class="rounded-xl p-3.5 bg-black/30 border border-white/5">
+        <div class="rounded-xl p-3.5 bg-slate-100 border border-slate-200">
           <div class="text-[10px] font-bold text-noise uppercase tracking-wider mb-1.5"><i class="fa-solid fa-bolt mr-1"></i>THEN — 그때의 헤드라인</div>
-          <p class="text-sm font-semibold text-slate-100 leading-snug">"${c.headline}"</p>
+          <p class="text-sm font-semibold text-slate-800 leading-snug">"${c.headline}"</p>
         </div>
         <div class="rounded-xl p-3.5 border ${isSignal?'bg-signal/10 border-signal/30':'bg-noise/10 border-noise/30'}">
           <div class="text-[10px] font-bold uppercase tracking-wider mb-1.5 ${isSignal?'text-signal':'text-noise'}"><i class="fa-solid ${isSignal?'fa-circle-check':'fa-circle-xmark'} mr-1"></i>NOW — 검증 결과</div>
-          <p class="text-sm text-slate-200 leading-snug">${c.verify}</p>
+          <p class="text-sm text-slate-800 leading-snug">${c.verify}</p>
           <div class="mt-1.5 text-sm font-extrabold ${c.change>=0?'text-signal':'text-noise'}">${c.change>=0?'+':''}${c.change.toFixed(1)}%</div>
         </div>
       </div>
@@ -788,16 +788,16 @@ function renderRevenueChart(){
       labels: months,
       datasets:[
         { type:'bar', label:'Free 사용자', data:freeUsers, backgroundColor:'rgba(100,116,139,0.5)', borderRadius:6, yAxisID:'y' },
-        { type:'line', label:'MRR ($)', data:mrr, borderColor:'#eab308', backgroundColor:'rgba(234,179,8,0.15)', fill:true, tension:0.35, yAxisID:'y1', pointRadius:3, pointBackgroundColor:'#eab308' },
+        { type:'line', label:'MRR ($)', data:mrr, borderColor:'#ca8a04', backgroundColor:'rgba(202,138,4,0.15)', fill:true, tension:0.35, yAxisID:'y1', pointRadius:3, pointBackgroundColor:'#ca8a04' },
       ]
     },
     options:{
       responsive:true, maintainAspectRatio:false,
       plugins:{ legend:{ display:false } },
       scales:{
-        x:{ grid:{ display:false }, ticks:{ color:'#64748b', font:{size:10} } },
-        y:{ position:'left', grid:{ color:'rgba(255,255,255,0.04)' }, ticks:{ color:'#64748b', font:{size:10} }, title:{display:true,text:'사용자 수',color:'#64748b',font:{size:10}} },
-        y1:{ position:'right', grid:{ display:false }, ticks:{ color:'#eab308', font:{size:10}, callback:v=>'$'+v.toLocaleString('en-US') } },
+        x:{ grid:{ display:false }, ticks:{ color:'#475569', font:{size:10} } },
+        y:{ position:'left', grid:{ color:'rgba(0,0,0,0.06)' }, ticks:{ color:'#475569', font:{size:10} }, title:{display:true,text:'사용자 수',color:'#475569',font:{size:10}} },
+        y1:{ position:'right', grid:{ display:false }, ticks:{ color:'#ca8a04', font:{size:10}, callback:v=>'$'+v.toLocaleString('en-US') } },
       }
     }
   });
