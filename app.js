@@ -1294,7 +1294,7 @@ let currentDetailVendorId = null;
 function openVendorDetail(vendorId) {
   currentDetailVendorId = vendorId;
   const vendor = vendors.find(v => v.id === vendorId);
-  const { start, end } = getPeriodRange(currentPeriod);
+  const { start, end } = getSummaryRange();
 
   const vendorTxs = transactions
     .filter(t => t.vendorId === vendorId && t.date >= start && t.date <= end)
@@ -1330,9 +1330,9 @@ function openVendorDetail(vendorId) {
     </tr>`;
   }).join('') || `<tr><td colspan="8"><div class="empty-state" style="padding:24px"><div class="empty-icon">📭</div><p>해당 기간 거래 없음</p></div></td></tr>`;
 
-  const periodStr = currentPeriod === 'custom'
-    ? `${customDateFrom || '전체'} ~ ${customDateTo || '전체'}`
-    : periodLabel(currentPeriod);
+  const periodStr = summaryPeriod === 'custom'
+    ? `${summaryCustomFrom || '전체'} ~ ${summaryCustomTo || '전체'}`
+    : periodLabel(summaryPeriod);
 
   const html = `
     <input type="hidden" id="detail-vendor-id" value="${vendorId}">
