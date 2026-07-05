@@ -367,10 +367,10 @@ function handleSms(payload) {
   raw.appendRow([receivedAt, body]);
   Logger.log('sms_raw 시트에 기록 완료 (스프레드시트: ' + SpreadsheetApp.getActiveSpreadsheet().getName() + ')');
 
-  // 카드사 판별 (라스베가스 = 롯데카드 별칭 → 롯데카드로 정규화)
-  const cardMatch = body.match(/라스베가스|롯데카드|현대카드/);
+  // 카드사 판별 (라스베가스·롯데 = 롯데카드 별칭 → 롯데카드로 정규화)
+  const cardMatch = body.match(/라스베가스|롯데카드|롯데|현대카드/);
   let   cardType  = cardMatch ? cardMatch[0] : '';
-  if (cardType === '라스베가스') cardType = '롯데카드';
+  if (cardType === '라스베가스' || cardType === '롯데') cardType = '롯데카드';
   Logger.log('인식된 카드: [' + cardType + ']');
 
   if (PERSONAL_CARDS.indexOf(cardType) > -1) {
