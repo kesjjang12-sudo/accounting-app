@@ -482,9 +482,28 @@ function periodLabel(p) {
 
 // ── Bulk Selection ────────────────────────────────────────
 const _sel = { vendors: new Set(), items: new Set(), txRows: new Set(), quotes: new Set() };
+const _lastSelIdx = {};
 
 function toggleSel(page, id) {
   _sel[page].has(id) ? _sel[page].delete(id) : _sel[page].add(id);
+  _updateSelUI(page);
+}
+function selCbClick(e, page, id) {
+  const allCbs = [...document.querySelectorAll(`.sel-cb[data-page="${page}"]`)];
+  const cur = e.currentTarget;
+  const curIdx = allCbs.indexOf(cur);
+  if (e.shiftKey && _lastSelIdx[page] != null) {
+    const a = Math.min(_lastSelIdx[page], curIdx);
+    const b = Math.max(_lastSelIdx[page], curIdx);
+    const target = cur.checked;
+    allCbs.slice(a, b + 1).forEach(cb => {
+      cb.checked = target;
+      target ? _sel[page].add(cb.value) : _sel[page].delete(cb.value);
+    });
+  } else {
+    cur.checked ? _sel[page].add(id) : _sel[page].delete(id);
+  }
+  _lastSelIdx[page] = curIdx;
   _updateSelUI(page);
 }
 function selAll(page, chk) {
@@ -492,6 +511,7 @@ function selAll(page, chk) {
     cb.checked = chk.checked;
     chk.checked ? _sel[page].add(cb.value) : _sel[page].delete(cb.value);
   });
+  _lastSelIdx[page] = null;
   _updateSelUI(page);
 }
 function _updateSelUI(page) {
@@ -1925,7 +1945,7 @@ function txRowsHtml(filtered) {
       : validItems.length === 1 ? validItems[0].itemName
       : `${validItems[0].itemName} 외 ${validItems.length-1}건`;
     return `<tr>
-      <td style="text-align:center;width:36px"><input type="checkbox" class="sel-cb tx-checkbox" data-page="txRows" value="${t.id}" ${_sel.txRows.has(t.id)?'checked':''} onchange="toggleSel('txRows','${t.id}')"></td>
+      <td style="text-align:center;width:36px"><input type="checkbox" class="sel-cb tx-checkbox" data-page="txRows" value="${t.id}" ${_sel.txRows.has(t.id)?'checked':''} onclick="selCbClick(event,'txRows','${t.id}')"></td>
       <td>${t.date}</td>
       <td>${t.type==='매출'?'<span class="badge badge-sales">매출</span>':'<span class="badge badge-purchase">매입</span>'}${bizCatBadge}${acCatBadge}</td>
       <td>${v?v.companyName:'-'}</td>
