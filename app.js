@@ -841,7 +841,7 @@ function renderVendorSummaryTab(el, filtered) {
     const v   = vendors.find(v => v.id === t.vendorId);
     if (!byVendor[key]) byVendor[key] = {
       name: v ? v.companyName : '(기타)', vendorId: t.vendorId || '',
-      sales: 0, salesUnpaid: 0, purchase: 0, purchasePaid: 0
+      sales: 0, salesUnpaid: 0, purchase: 0, purchaseUnpaid: 0
     };
     const total = t.items.reduce((s, i) => s + i.amount + i.tax, 0);
     if (t.type === '매출') {
@@ -849,7 +849,7 @@ function renderVendorSummaryTab(el, filtered) {
       if (!t.isPaid) byVendor[key].salesUnpaid += total;
     } else {
       byVendor[key].purchase += total;
-      if (t.isPaid) byVendor[key].purchasePaid += total;
+      if (!t.isPaid) byVendor[key].purchaseUnpaid += total;
     }
   });
 
@@ -866,8 +866,9 @@ function renderVendorSummaryTab(el, filtered) {
   };
   list.sort(sortFns[summaryVendorSort] || sortFns['total_desc']);
 
-  let totPurch=0, totPurchPaid=0, totSales=0, totSalesUnpaid=0;
-  list.forEach(v=>{ totPurch+=v.purchase; totPurchPaid+=v.purchasePaid; totSales+=v.sales; totSalesUnpaid+=v.salesUnpaid; });
+  let totPurch=0, totPurchUnpaid=0, totSales=0, totSalesUnpaid=0;
+  list.forEach(v=>{ totPurch+=v.purchase; totPurchUnpaid+=v.purchaseUnpaid; totSales+=v.sales; totSalesUnpaid+=v.salesUnpaid; });
+  const totalProfit = totSales - totPurch;
 
   const rows = list.map(v => {
     const nameCell = v.vendorId
@@ -875,7 +876,7 @@ function renderVendorSummaryTab(el, filtered) {
       : v.name;
     return `<tr>
       <td style="text-align:right;color:var(--success)">${v.purchase ? fmt(v.purchase) : ''}</td>
-      <td style="text-align:right;color:var(--danger)">${v.purchasePaid ? fmt(v.purchasePaid) : ''}</td>
+      <td style="text-align:right;color:var(--danger)">${v.purchaseUnpaid ? fmt(v.purchaseUnpaid) : ''}</td>
       <td style="text-align:center">${nameCell}</td>
       <td style="text-align:right;color:var(--primary)">${v.sales ? fmt(v.sales) : ''}</td>
       <td style="text-align:right;color:var(--warning)">${v.salesUnpaid ? fmt(v.salesUnpaid) : ''}</td>
@@ -911,7 +912,7 @@ function renderVendorSummaryTab(el, filtered) {
       <table>
         <thead><tr>
           <th style="text-align:right;width:140px;color:var(--success)">매입</th>
-          <th style="text-align:right;width:130px;color:var(--danger)">출돈 (결제)</th>
+          <th style="text-align:right;width:130px;color:var(--danger)">줄돈 (미지급)</th>
           <th style="text-align:center">거래처</th>
           <th style="text-align:right;width:140px;color:var(--primary)">매출</th>
           <th style="text-align:right;width:130px;color:var(--warning)">받을돈 (미수)</th>
@@ -919,12 +920,16 @@ function renderVendorSummaryTab(el, filtered) {
         <tbody>${rows}</tbody>
         <tfoot><tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">
           <td style="text-align:right;color:var(--success)">${fmt(totPurch)}</td>
-          <td style="text-align:right;color:var(--danger)">${fmt(totPurchPaid)}</td>
+          <td style="text-align:right;color:var(--danger)">${fmt(totPurchUnpaid)}</td>
           <td style="text-align:center">합 계</td>
           <td style="text-align:right;color:var(--primary)">${fmt(totSales)}</td>
           <td style="text-align:right;color:var(--warning)">${fmt(totSalesUnpaid)}</td>
         </tr></tfoot>
       </table>
+    </div>
+    <div class="card" style="margin-top:14px;text-align:center">
+      <div class="card-title">총 수익 (매출 - 매입)</div>
+      <div class="card-value ${totalProfit>=0?'positive':'negative'}" style="font-size:22px">${fmt(totalProfit)}원</div>
     </div>`;
 }
 
@@ -937,13 +942,13 @@ function exportVendorSummaryXlsx() {
   src.forEach(t => {
     const key = t.vendorId || '__etc__';
     const v = vendors.find(v => v.id === t.vendorId);
-    if (!byVendor[key]) byVendor[key] = { name: v?v.companyName:'(기타)', sales:0, salesUnpaid:0, purchase:0, purchasePaid:0 };
+    if (!byVendor[key]) byVendor[key] = { name: v?v.companyName:'(기타)', sales:0, salesUnpaid:0, purchase:0, purchaseUnpaid:0 };
     const total = t.items.reduce((s,i)=>s+i.amount+i.tax,0);
     if (t.type==='매출') { byVendor[key].sales+=total; if(!t.isPaid) byVendor[key].salesUnpaid+=total; }
-    else { byVendor[key].purchase+=total; if(t.isPaid) byVendor[key].purchasePaid+=total; }
+    else { byVendor[key].purchase+=total; if(!t.isPaid) byVendor[key].purchaseUnpaid+=total; }
   });
-  const rows = [['거래처','매입','출돈(결제)','매출','받을돈(미수)']];
-  Object.values(byVendor).forEach(v => rows.push([v.name, v.purchase, v.purchasePaid, v.sales, v.salesUnpaid]));
+  const rows = [['거래처','매입','줄돈(미지급)','매출','받을돈(미수)']];
+  Object.values(byVendor).forEach(v => rows.push([v.name, v.purchase, v.purchaseUnpaid, v.sales, v.salesUnpaid]));
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '거래처별집계');
