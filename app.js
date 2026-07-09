@@ -1863,10 +1863,10 @@ function openItemModal(id = null) {
       <div class="form-group"><label>품목코드</label><input id="i-code" class="form-control" placeholder="A001" value="${it?it.code||'':''}"></div>
       <div class="form-group"><label>단위</label><input id="i-unit" class="form-control" placeholder="EA, BOX, KG..." value="${it?it.unit||'':''}"></div>
       <div class="form-section-title full" style="margin-top:4px">매입 정보</div>
-      <div class="form-group"><label>매입단가</label><input id="i-purchase-price" class="form-control" type="number" value="${it?it.purchasePrice||'':''}"></div>
+      <div class="form-group"><label>매입단가</label><input id="i-purchase-price" class="form-control" type="text" inputmode="numeric" value="${numFmt(it?it.purchasePrice:0)}" oninput="fmtField(this)" style="text-align:right"></div>
       <div class="form-group"><label>매입거래처</label><select id="i-purchase-vendor" class="form-control"><option value="">선택 안 함</option>${vOpts('purchaseVendorId')}</select></div>
       <div class="form-section-title full" style="margin-top:4px">매출 정보</div>
-      <div class="form-group"><label>매출단가</label><input id="i-sales-price" class="form-control" type="number" value="${it?it.salesPrice||'':''}"></div>
+      <div class="form-group"><label>매출단가</label><input id="i-sales-price" class="form-control" type="text" inputmode="numeric" value="${numFmt(it?it.salesPrice:0)}" oninput="fmtField(this)" style="text-align:right"></div>
       <div class="form-group"><label>매출거래처</label><select id="i-sales-vendor" class="form-control"><option value="">선택 안 함</option>${vOpts('salesVendorId')}</select></div>
       <div class="form-group full"><label class="checkbox-label"><input type="checkbox" id="i-tax-exempt" ${it&&it.taxExempt?'checked':''}> 비과세 품목 (부가세 미적용)</label></div>
       <div class="form-group full"><label>비고</label><input id="i-notes" class="form-control" value="${it?it.notes||'':''}"></div>
@@ -1884,9 +1884,9 @@ function saveItem(id) {
   const data = {
     name, spec: document.getElementById('i-spec').value.trim(), code: document.getElementById('i-code').value.trim(),
     unit: document.getElementById('i-unit').value.trim(),
-    purchasePrice: Number(document.getElementById('i-purchase-price').value)||0,
+    purchasePrice: parseNum('i-purchase-price'),
     purchaseVendorId: document.getElementById('i-purchase-vendor').value,
-    salesPrice: Number(document.getElementById('i-sales-price').value)||0,
+    salesPrice: parseNum('i-sales-price'),
     salesVendorId: document.getElementById('i-sales-vendor').value,
     taxExempt: document.getElementById('i-tax-exempt').checked,
     notes: document.getElementById('i-notes').value.trim()
@@ -2191,7 +2191,7 @@ function renderLineItems() {
       </div></td>
       <td><input data-idx="${idx}" data-field="unit"      class="line-field" value="${line.unit}"      oninput="onLineChange(this)"></td>
       <td><input data-idx="${idx}" data-field="quantity"  class="line-field" type="number" value="${line.quantity}"  style="min-width:80px" oninput="onLineChange(this)"></td>
-      <td><input data-idx="${idx}" data-field="unitPrice" class="line-field" type="number" value="${line.unitPrice}" style="min-width:100px" oninput="onLineChange(this)"></td>
+      <td><input data-idx="${idx}" data-field="unitPrice" class="line-field" type="text" inputmode="numeric" value="${numFmt(line.unitPrice)}" style="min-width:100px" oninput="fmtField(this);onLineChange(this)"></td>
       <td class="readonly-cell">${fmt(line.amount)}</td>
       <td class="readonly-cell">${fmt(line.tax)}</td>
       <td><input data-idx="${idx}" data-field="notes" class="line-field" value="${line.notes}" oninput="onLineChange(this)"></td>
@@ -2252,7 +2252,7 @@ function selectItem(idx, itemId) {
 function onLineChange(input) {
   const idx   = Number(input.dataset.idx);
   const field = input.dataset.field;
-  txLineItems[idx][field] = (field==='unit'||field==='notes') ? input.value : (Number(input.value)||0);
+  txLineItems[idx][field] = (field==='unit'||field==='notes') ? input.value : (Number(String(input.value).replace(/[^0-9.]/g,''))||0);
   const line  = txLineItems[idx];
   line.amount = line.quantity * line.unitPrice;
   line.tax    = line.taxExempt ? 0 : Math.round(line.amount * 0.1);
@@ -4409,7 +4409,7 @@ function openAddCandidateModal() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div class="form-group">
           <label>금액 (원)</label>
-          <input id="ac-amount" type="number" class="form-control" placeholder="15000">
+          <input id="ac-amount" type="text" inputmode="numeric" class="form-control" placeholder="15,000" oninput="fmtField(this)">
         </div>
         <div class="form-group">
           <label>계정 분류</label>
@@ -4433,7 +4433,7 @@ function autoFillFromSms() {
   const parsed = parseSmsBody(body);
   if (parsed.date)     document.getElementById('ac-date').value     = parsed.date;
   if (parsed.merchant) document.getElementById('ac-merchant').value = parsed.merchant;
-  if (parsed.amount)   document.getElementById('ac-amount').value   = parsed.amount;
+  if (parsed.amount)   document.getElementById('ac-amount').value   = numFmt(parsed.amount);
   if (parsed.cardType) document.getElementById('ac-card').value     = parsed.cardType;
   if (parsed.merchant) document.getElementById('ac-cat').value      = suggestCategory(parsed.merchant);
 }
@@ -4441,7 +4441,7 @@ function autoFillFromSms() {
 function doAddManualCandidate() {
   const date     = document.getElementById('ac-date')?.value || new Date().toISOString().slice(0,10);
   const merchant = (document.getElementById('ac-merchant')?.value || '').trim();
-  const amount   = parseInt(document.getElementById('ac-amount')?.value) || 0;
+  const amount   = parseNum('ac-amount');
   const cardType = (document.getElementById('ac-card')?.value || '').trim();
   const category = document.getElementById('ac-cat')?.value || suggestCategory(merchant);
   const memo     = (document.getElementById('ac-memo')?.value || '').trim();
