@@ -2190,7 +2190,7 @@ function renderLineItems() {
         <div class="search-dropdown hidden" id="item-dd-${idx}"></div>
       </div></td>
       <td><input data-idx="${idx}" data-field="unit"      class="line-field" value="${line.unit}"      oninput="onLineChange(this)"></td>
-      <td><input data-idx="${idx}" data-field="quantity"  class="line-field" type="number" value="${line.quantity}"  style="min-width:80px" oninput="onLineChange(this)"></td>
+      <td><input data-idx="${idx}" data-field="quantity"  class="line-field" type="text" inputmode="numeric" value="${numFmt(line.quantity)}"  style="min-width:80px" oninput="fmtField(this);onLineChange(this)"></td>
       <td><input data-idx="${idx}" data-field="unitPrice" class="line-field" type="text" inputmode="numeric" value="${numFmt(line.unitPrice)}" style="min-width:100px" oninput="fmtField(this);onLineChange(this)"></td>
       <td class="readonly-cell">${fmt(line.amount)}</td>
       <td class="readonly-cell">${fmt(line.tax)}</td>
