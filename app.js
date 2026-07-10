@@ -571,6 +571,13 @@ function deleteSelected(page) {
   render(currentPage);
 }
 
+// 홈 대시보드 미수금/미지급금 카드 클릭 → 거래내역 페이지에서 미결제 건만 표시
+function goToUnpaidTx(type) {
+  txSearch = '';
+  txFilter = { type, vendorId: '', dateFrom: '', dateTo: '', paid: 'unpaid' };
+  navigate('transactions');
+}
+
 // 거래처 상세에서 날짜/품목 클릭 → 거래내역 페이지에서 그 날짜 거래 표시
 function goToTxFromDetail(date, vendorId) {
   closeModal();
@@ -707,11 +714,21 @@ function closeModal() {
 function renderHome(el) {
   // 전체 기간 기준 카드 표시
   const allTx = transactions;
+  const todayStr = today();
   let totalSales = 0, totalPurchase = 0, unpaidSales = 0, unpaidPurchase = 0;
+  let overdueSalesCnt = 0, overdueSalesAmt = 0, overduePurchCnt = 0, overduePurchAmt = 0;
   allTx.forEach(t => {
     const total = t.items.reduce((s, i) => s + i.amount + i.tax, 0);
-    if (t.type === '매출') { totalSales += total; if (!t.isPaid) unpaidSales += total; }
-    else                   { totalPurchase += total; if (!t.isPaid) unpaidPurchase += total; }
+    const overdue = !t.isPaid && t.dueDate && t.dueDate < todayStr;
+    if (t.type === '매출') {
+      totalSales += total;
+      if (!t.isPaid) unpaidSales += total;
+      if (overdue) { overdueSalesCnt++; overdueSalesAmt += total; }
+    } else {
+      totalPurchase += total;
+      if (!t.isPaid) unpaidPurchase += total;
+      if (overdue) { overduePurchCnt++; overduePurchAmt += total; }
+    }
   });
   const profit = totalSales - totalPurchase;
 
@@ -755,19 +772,21 @@ function renderHome(el) {
     </div>
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:28px">
-      <div class="card" style="border-left:4px solid var(--warning)">
+      <div class="card" style="border-left:4px solid var(--warning);cursor:pointer" onclick="goToUnpaidTx('매출')">
         <div class="card-title" style="display:flex;align-items:center;gap:6px">
           <span style="color:var(--warning)">●</span> 미수금 (미결제 매출)
         </div>
         <div class="card-value" style="color:var(--warning)">${fmt(unpaidSales)}원</div>
         ${unpaidSales > 0 ? `<div style="font-size:12px;color:var(--gray-500);margin-top:4px">아직 받지 못한 금액</div>` : `<div style="font-size:12px;color:var(--success);margin-top:4px">✓ 미수금 없음</div>`}
+        ${overdueSalesCnt > 0 ? `<div style="font-size:12px;color:var(--danger);font-weight:600;margin-top:6px">⚠ 기한 초과 ${overdueSalesCnt}건 · ${fmt(overdueSalesAmt)}원</div>` : ''}
       </div>
-      <div class="card" style="border-left:4px solid var(--danger)">
+      <div class="card" style="border-left:4px solid var(--danger);cursor:pointer" onclick="goToUnpaidTx('매입')">
         <div class="card-title" style="display:flex;align-items:center;gap:6px">
           <span style="color:var(--danger)">●</span> 미지급금 (미결제 매입)
         </div>
         <div class="card-value negative">${fmt(unpaidPurchase)}원</div>
         ${unpaidPurchase > 0 ? `<div style="font-size:12px;color:var(--gray-500);margin-top:4px">아직 지급하지 못한 금액</div>` : `<div style="font-size:12px;color:var(--success);margin-top:4px">✓ 미지급금 없음</div>`}
+        ${overduePurchCnt > 0 ? `<div style="font-size:12px;color:var(--danger);font-weight:600;margin-top:6px">⚠ 기한 초과 ${overduePurchCnt}건 · ${fmt(overduePurchAmt)}원</div>` : ''}
       </div>
     </div>
 
@@ -1367,11 +1386,13 @@ function openVendorDetail(vendorId) {
     const amt = t.items.reduce((s,i) => s+i.amount, 0);
     const tax = t.items.reduce((s,i) => s+i.tax, 0);
     const summary = t.items.length > 1 ? `${t.items[0].itemName} 외 ${t.items.length-1}건` : (t.items[0]?.itemName || '-');
+    const overdue = !t.isPaid && t.dueDate && t.dueDate < today();
+    const dueLine = !t.isPaid && t.dueDate ? `<br><span style="font-size:10px;${overdue?'color:var(--danger);font-weight:700':'color:var(--gray-500)'}">${overdue?'⚠ 기한초과 ':'예정 '}${t.dueDate}</span>` : '';
     const paidBadge = t.isPaid
       ? `<span class="badge" style="background:#f0fdf4;color:#16a34a">결제완료</span>${t.paidAt ? `<br><span style="font-size:11px;color:var(--gray-500)">${t.paidAt}</span>` : ''}`
       : (t.type === '매출'
-          ? `<span class="badge" style="background:#fffbeb;color:#d97706">미수금</span>`
-          : `<span class="badge" style="background:#fef2f2;color:#dc2626">미지급</span>`);
+          ? `<span class="badge" style="background:#fffbeb;color:#d97706">미수금</span>${dueLine}`
+          : `<span class="badge" style="background:#fef2f2;color:#dc2626">미지급</span>${dueLine}`);
     const markBtn = !t.isPaid
       ? `<button class="btn btn-ghost btn-sm" style="margin-top:4px;padding:2px 8px" onclick="openMarkPaidModal('${t.id}')">결제처리</button>`
       : '';
@@ -1498,6 +1519,7 @@ function confirmPaid(txId) {
     transactions[idx].isPaid      = true;
     transactions[idx].paidAt      = paidAt;
     transactions[idx].paidMethod  = paidMethod;
+    transactions[idx].dueDate     = '';
     saveTransactions();
   }
   if (currentDetailVendorId) {
@@ -1965,10 +1987,13 @@ function txRowsHtml(filtered) {
     } else {
       const daysDiff = Math.floor((todayMs - new Date(t.date).setHours(0,0,0,0)) / 86400000);
       const daysBadge = daysDiff > 0 ? `<span style="font-size:10px;color:var(--gray-500);margin-left:4px">${daysDiff}일 경과</span>` : '';
+      const overdue   = t.dueDate && t.dueDate < today();
+      const dueBadge  = t.dueDate
+        ? `<br><span style="font-size:10px;${overdue?'color:var(--danger);font-weight:700':'color:var(--gray-500)'}">${overdue?'⚠ 기한초과 ':'예정 '}${t.dueDate}</span>` : '';
       if (t.type==='매출') {
-        paidBadge = `<span class="badge" style="background:#fffbeb;color:#d97706">미수금</span>${daysBadge}`;
+        paidBadge = `<span class="badge" style="background:#fffbeb;color:#d97706">미수금</span>${daysBadge}${dueBadge}`;
       } else {
-        paidBadge = `<span class="badge" style="background:#fef2f2;color:#dc2626">미지급</span>${daysBadge}`;
+        paidBadge = `<span class="badge" style="background:#fef2f2;color:#dc2626">미지급</span>${daysBadge}${dueBadge}`;
       }
     }
 
@@ -2167,6 +2192,10 @@ function openTransactionModal(prefill = null, editId = null) {
           결제 완료 (체크 해제 시 미수금 / 미지급금으로 등록)
         </label>
       </div>
+      <div class="form-group" id="tx-duedate-wrap" style="${(prefill && prefill.isPaid) ? 'display:none' : ''}">
+        <label>결제예정일 <span style="font-size:11px;color:var(--gray-400)">(미수금/미지급 알림용, 선택)</span></label>
+        <input id="tx-due-date" class="form-control" type="date" value="${prefill?.dueDate||''}">
+      </div>
     </div>
     <input type="hidden" id="tx-edit-id" value="${editId||''}">
 
@@ -2202,7 +2231,8 @@ function openTransactionModal(prefill = null, editId = null) {
 }
 
 function togglePaidSection(cb) {
-  // 현재는 체크박스만으로 충분 (isPaid 저장에 반영됨)
+  const wrap = document.getElementById('tx-duedate-wrap');
+  if (wrap) wrap.style.display = cb.checked ? 'none' : '';
 }
 
 function newLineItem() {
@@ -2337,6 +2367,7 @@ function saveTx(cont) {
   const vendorId       = document.getElementById('tx-vendor-sel').value;
   const paymentMethod  = document.getElementById('tx-payment').value;
   const isPaid         = document.getElementById('tx-is-paid').checked;
+  const dueDate        = document.getElementById('tx-due-date')?.value || '';
   const autoPurchase   = document.getElementById('tx-auto-purchase')?.checked;
   const accountCategory = document.getElementById('tx-account-cat')?.value || type;
   const bizCategory     = document.getElementById('tx-biz-category')?.value || '제조업';
@@ -2355,12 +2386,13 @@ function saveTx(cont) {
       const orig = transactions[idx];
       transactions[idx] = { ...orig, date, type, accountCategory, bizCategory, vendorId, paymentMethod,
         isPaid, paidAt: isPaid ? (orig.paidAt || date) : '', paidMethod: isPaid ? (orig.paidMethod || paymentMethod) : '',
+        dueDate: isPaid ? '' : dueDate,
         items: validItems };
     }
     saveTransactions(); closeModal(); render(currentPage); return;
   }
 
-  transactions.push({ id: uid(), date, type, accountCategory, bizCategory, vendorId, paymentMethod, isPaid, paidAt: isPaid ? date : '', paidMethod: isPaid ? paymentMethod : '', items: validItems });
+  transactions.push({ id: uid(), date, type, accountCategory, bizCategory, vendorId, paymentMethod, isPaid, paidAt: isPaid ? date : '', paidMethod: isPaid ? paymentMethod : '', dueDate: isPaid ? '' : dueDate, items: validItems });
 
   if (autoPurchase && type === '매출') {
     const pItems = validItems.map(line => {
