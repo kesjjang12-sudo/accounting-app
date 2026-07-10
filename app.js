@@ -61,18 +61,46 @@ async function runAutoSheetsBackup() {
     const key = localStorage.key(i);
     if (key.startsWith('acc_') || key === '_biz_migrated') storage[key] = localStorage.getItem(key);
   }
+  const clientTime = new Date().toISOString();
   try {
     const res  = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
-      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', data: storage })
+      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', data: storage, clientTime })
     });
     const json = await res.json();
-    if (json.success) { showSheetsBackupStatus('☁ 자동 백업 완료', 'success'); setBackupStatus(true); }
+    if (json.success) { showSheetsBackupStatus('☁ 자동 백업 완료', 'success'); setBackupStatus(true); localStorage.setItem('_sync_marker', clientTime); }
     else              { showSheetsBackupStatus('☁ 백업 실패', 'error');      setBackupStatus(false); }
   } catch {
     showSheetsBackupStatus('☁ 백업 실패 (연결 오류)', 'error');
     setBackupStatus(false);
   }
+}
+
+// ── 기기간 자동 동기화: 열 때마다 클라우드가 더 최신이면 자동으로 불러옴 ──
+async function checkAutoSyncOnLoad() {
+  if (!APPS_SCRIPT_URL || !SHEETS_SECRET) return;
+  try {
+    const res  = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'getSyncMeta' })
+    });
+    const json = await res.json();
+    if (!json.success || !json.updatedAt) return;
+    const localMarker = localStorage.getItem('_sync_marker') || '';
+    if (json.updatedAt <= localMarker) return;
+
+    const res2  = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'restoreStorage' })
+    });
+    const json2 = await res2.json();
+    if (json2.success && json2.data && Object.keys(json2.data).length) {
+      Object.entries(json2.data).forEach(([k, v]) => localStorage.setItem(k, v));
+      localStorage.setItem('_sync_marker', json.updatedAt);
+      showSheetsBackupStatus('☁ 다른 기기의 최신 데이터를 불러왔습니다', 'success');
+      location.reload();
+    }
+  } catch {}
 }
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -138,13 +166,14 @@ async function backupToSheets() {
   }
   const btn = document.getElementById('sheets-backup-btn');
   if (btn) { btn.disabled = true; btn.textContent = '백업 중...'; }
+  const clientTime = new Date().toISOString();
   try {
     const res  = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
-      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', data: storage })
+      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', data: storage, clientTime })
     });
     const json = await res.json();
-    if (json.success) { setBackupStatus(true);  alert(`☁ 구글시트 백업 완료!\n${Object.keys(storage).length}개 항목 저장됨`); }
+    if (json.success) { setBackupStatus(true); localStorage.setItem('_sync_marker', clientTime); alert(`☁ 구글시트 백업 완료!\n${Object.keys(storage).length}개 항목 저장됨`); }
     else              { setBackupStatus(false); alert('백업 실패: ' + (json.message || '알 수 없는 오류')); }
   } catch (err) {
     setBackupStatus(false);
@@ -164,13 +193,14 @@ async function snapshotNow() {
   }
   const btn = document.getElementById('snapshot-btn');
   if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; }
+  const clientTime = new Date().toISOString();
   try {
     const res  = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
-      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', snapshot: 'force', data: storage })
+      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', snapshot: 'force', data: storage, clientTime })
     });
     const json = await res.json();
-    if (json.success) { setBackupStatus(true);  alert('🛟 안전저장 완료!\n현재 상태가 스냅샷으로 보관됐어요.\n(나중에 ↩ 되돌리기에서 이 시점으로 복원 가능)'); }
+    if (json.success) { setBackupStatus(true); localStorage.setItem('_sync_marker', clientTime); alert('🛟 안전저장 완료!\n현재 상태가 스냅샷으로 보관됐어요.\n(나중에 ↩ 되돌리기에서 이 시점으로 복원 가능)'); }
     else              { setBackupStatus(false); alert('안전저장 실패: ' + (json.message || '오류')); }
   } catch (err) {
     setBackupStatus(false);
@@ -221,6 +251,7 @@ async function restoreSnapshotById(id) {
       const count = Object.keys(json.data).length;
       if (!count) { alert('스냅샷이 비어있습니다.'); return; }
       Object.entries(json.data).forEach(([k, v]) => localStorage.setItem(k, v));
+      localStorage.setItem('_sync_marker', new Date().toISOString());
       alert(`↩ 복원 완료! ${count}개 항목을 불러왔습니다.\n앱을 새로고침합니다.`);
       location.reload();
     } else {
@@ -246,6 +277,7 @@ async function restoreFromSheets() {
       const count = Object.keys(json.data).length;
       if (!count) { alert('구글시트에 저장된 데이터가 없습니다.'); return; }
       Object.entries(json.data).forEach(([k, v]) => localStorage.setItem(k, v));
+      localStorage.setItem('_sync_marker', new Date().toISOString());
       alert(`☁ 복원 완료! ${count}개 항목 불러왔습니다.\n앱을 새로고침합니다.`);
       location.reload();
     } else {
@@ -4802,4 +4834,5 @@ document.addEventListener('DOMContentLoaded', () => {
   renderSidebarBiz();
   render('home');
   renderBackupStatus();
+  checkAutoSyncOnLoad();
 });

@@ -83,7 +83,7 @@ function doPost(e) {
       }
       const mode = payload.snapshot || 'auto';   // 'auto' | 'force' | 'none'
       if (mode === 'auto') maybeAutoSnapshot();   // 덮어쓰기 전 상태를 10분 간격으로 보관
-      saveStorage(payload.data);
+      saveStorage(payload.data, payload.clientTime);
       if (mode === 'force') createSnapshot();      // 수동: 방금 저장한 현재 상태 보관
       return respond({ success: true, count: Object.keys(payload.data).length });
     }
@@ -91,6 +91,10 @@ function doPost(e) {
     if (payload.action === 'restoreStorage') {
       const data = loadStorage();
       return respond({ success: true, data });
+    }
+
+    if (payload.action === 'getSyncMeta') {
+      return respond(Object.assign({ success: true }, getStorageSyncMeta()));
     }
 
     if (payload.action === 'createSnapshot') {
@@ -176,8 +180,8 @@ function getStorageSheet() {
 var MAX_CELL = 45000;
 
 // ── 저장: localStorage 데이터 → storage 시트 (큰 값 자동 청크 분할) ──
-function saveStorage(data) {
-  writeKvSheet(getStorageSheet(), data);
+function saveStorage(data, clientTime) {
+  writeKvSheet(getStorageSheet(), data, clientTime);
 }
 
 // ── 불러오기: storage 시트 → key/value 객체 (청크 재조립) ──
@@ -185,9 +189,17 @@ function loadStorage() {
   return readKvSheet(getStorageSheet());
 }
 
+// storage 시트의 최근 갱신 시각 (기기간 자동 동기화 판단용)
+function getStorageSyncMeta() {
+  const sheet = getStorageSheet();
+  if (sheet.getLastRow() <= 1) return { updatedAt: '' };
+  const v = sheet.getRange(2, 3).getValue();
+  return { updatedAt: v instanceof Date ? v.toISOString() : String(v) };
+}
+
 // key/value(+청크)를 시트에 통째로 다시 기록 (전체 스냅샷이 매번 전송되므로 clear & rewrite)
-function writeKvSheet(sheet, data) {
-  const now  = new Date().toISOString();
+function writeKvSheet(sheet, data, clientTime) {
+  const now  = clientTime || new Date().toISOString();
   const rows = [];
   Object.keys(data).forEach(function (key) {
     var value = data[key];
