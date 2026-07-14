@@ -35,13 +35,18 @@ const DBshared = {
   save(key, data) { localStorage.setItem(key, JSON.stringify(data)); }
 };
 
-let vendors      = DBshared.load('acc_vendors');
-let items        = DBshared.load('acc_items');
+// 이름 ㄱㄴㄷㄹ순 정렬 (거래처·품목·사업체 공통)
+function koSortBy(arr, key) {
+  return arr.sort((a, b) => String(a[key]||'').localeCompare(String(b[key]||''), 'ko'));
+}
+
+let vendors      = koSortBy(DBshared.load('acc_vendors'), 'companyName');
+let items        = koSortBy(DBshared.load('acc_items'), 'name');
 let transactions = DB.load('acc_transactions');
 let companyInfo  = DB.load('acc_company', '{}');
 
-function saveVendors()      { DBshared.save('acc_vendors', vendors);     scheduleSheetsBackup(); }
-function saveItems()        { DBshared.save('acc_items', items);          scheduleSheetsBackup(); }
+function saveVendors()      { koSortBy(vendors, 'companyName'); DBshared.save('acc_vendors', vendors); scheduleSheetsBackup(); }
+function saveItems()        { koSortBy(items, 'name'); DBshared.save('acc_items', items); scheduleSheetsBackup(); }
 function saveTransactions() { DB.save('acc_transactions', transactions);  scheduleSheetsBackup(); }
 function saveCompanyInfo()  { DB.save('acc_company', companyInfo);        scheduleSheetsBackup(); }
 function saveQuotes()       { DB.save('acc_quotes', quotes);              scheduleSheetsBackup(); }
@@ -411,12 +416,12 @@ function renderSidebarBiz() {
       <button onclick="openBizManager()" style="background:none;border:none;color:#64748b;cursor:pointer;font-size:11px;padding:2px 6px;border-radius:4px" onmouseover="this.style.background='#334155'" onmouseout="this.style.background='none'">+ 관리</button>
     </div>
     <select onchange="switchBusiness(this.value)" style="width:100%;padding:6px 8px;background:#0f172a;color:#f1f5f9;border:1px solid #334155;border-radius:6px;font-size:13px;font-family:inherit;cursor:pointer">
-      ${businesses.map(b => `<option value="${b.id}" ${b.id === currentBizId ? 'selected' : ''}>${b.name}</option>`).join('')}
+      ${koSortBy([...businesses],'name').map(b => `<option value="${b.id}" ${b.id === currentBizId ? 'selected' : ''}>${b.name}</option>`).join('')}
     </select>`;
 }
 
 function openBizManager() {
-  const rows = businesses.map(b => `
+  const rows = koSortBy([...businesses],'name').map(b => `
     <div style="display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid var(--gray-100)">
       <input class="form-control" style="flex:1" value="${b.name}" id="biz-name-${b.id}" onkeydown="if(event.key==='Enter')renameBiz('${b.id}')">
       <button class="btn btn-ghost btn-sm" onclick="renameBiz('${b.id}')">저장</button>
@@ -822,8 +827,8 @@ function renderSummary(el) {
         <div class="page-subtitle">${summaryAllBiz ? '전체 사업체 합산' : bizName}</div>
       </div>
       ${businesses.length > 1 ? `
-      <div style="display:flex;gap:6px;align-items:center">
-        <button class="btn btn-sm ${!summaryAllBiz?'btn-primary':'btn-ghost'}" onclick="summaryAllBiz=false;render('summary')">${bizName}</button>
+      <div style="display:flex;gap:6px;align-items:center;flex-wrap:wrap">
+        ${koSortBy([...businesses],'name').map(b => `<button class="btn btn-sm ${!summaryAllBiz && b.id===currentBizId?'btn-primary':'btn-ghost'}" onclick="summaryAllBiz=false;${b.id===currentBizId?`render('summary')`:`switchBusiness('${b.id}')`}">${b.name}</button>`).join('')}
         <button class="btn btn-sm ${summaryAllBiz?'btn-primary':'btn-ghost'}" onclick="summaryAllBiz=true;render('summary')">전체 합산</button>
       </div>` : ''}
     </div>
@@ -3970,13 +3975,13 @@ function showPayslipMethod() {
 
 // ── 사업비 후보 ────────────────────────────────────────────
 function loadCandidates()          { return DBshared.load('acc_expense_candidates', '[]'); }
-function saveCandidates(list)      { DBshared.save('acc_expense_candidates', list); }
+function saveCandidates(list)      { DBshared.save('acc_expense_candidates', list); scheduleSheetsBackup(); }
 // 삭제한 후보 id 기록 → 동기화 시 되살아나지 않게
 function loadDeletedCandIds()      { return DBshared.load('acc_deleted_candidates', '[]'); }
 function markCandDeleted(id) {
   if (id == null) return;
   const ids = loadDeletedCandIds();
-  if (!ids.includes(id)) { ids.push(id); DBshared.save('acc_deleted_candidates', ids); }
+  if (!ids.includes(id)) { ids.push(id); DBshared.save('acc_deleted_candidates', ids); scheduleSheetsBackup(); }
 }
 
 function suggestCategory(merchant) {
@@ -4120,7 +4125,7 @@ function candDateText(d) {
 
 // ── 가맹점별 계정 학습 (3) ─────────────────────────────────
 function loadMerchantCats()        { return DBshared.load('acc_merchant_cats', '{}'); }
-function saveMerchantCats(map)     { DBshared.save('acc_merchant_cats', map); }
+function saveMerchantCats(map)     { DBshared.save('acc_merchant_cats', map); scheduleSheetsBackup(); }
 function learnMerchantCat(merchant, cat) {
   if (!merchant || !cat) return;
   const map = loadMerchantCats();
