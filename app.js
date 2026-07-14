@@ -3570,7 +3570,8 @@ function renderTaxPage(el) {
           ${ni('ti-misc-차량유지비', misc['차량유지비'])}
         </div>
         <div class="form-group">
-          <label>통신비 <span style="font-size:11px;font-weight:400;color:var(--gray-500)">GPT·인터넷·통신</span>${autoHint('통신비')}</label>
+          <label>통신비 <span style="font-size:11px;font-weight:400;color:var(--gray-500)">GPT·인터넷·통신</span>${autoHint('통신비')}<br>
+            <a class="vendor-link" style="font-size:11px" onclick="setTelecomOffset()" title="클릭해서 금액 수정">🏢 회사지원 매달 -₩${loadTelecomOffset().toLocaleString('ko-KR')} 차감 중 ✏</a></label>
           ${ni('ti-misc-통신비', misc['통신비'])}
         </div>
         <div class="form-group">
@@ -4145,13 +4146,39 @@ function candCategory(c) {
 function getConfirmedExpenseByCategory() {
   const sums = {};
   EXPENSE_CATS.forEach(k => sums[k] = 0);
+  const telecomByMonth = {};
   loadCandidates().forEach(c => {
     if (c.status === 'confirmed') {
       const k = candCategory(c);
-      sums[k] = (sums[k] || 0) + (Number(c.amount) || 0);
+      const amt = Number(c.amount) || 0;
+      sums[k] = (sums[k] || 0) + amt;
+      if (k === '통신비') {
+        const m = candMonth(c) || '기타';
+        telecomByMonth[m] = (telecomByMonth[m] || 0) + amt;
+      }
     }
   });
+  // 회사에서 지원받는 통신요금은 이중공제 방지를 위해 월별로 차감
+  const off = loadTelecomOffset();
+  if (off > 0) {
+    let ded = 0;
+    Object.values(telecomByMonth).forEach(v => { ded += Math.min(off, v); });
+    sums['통신비'] = Math.max(0, sums['통신비'] - ded);
+  }
   return sums;
+}
+
+function loadTelecomOffset() {
+  const v = localStorage.getItem('acc_telecom_offset');
+  return v == null ? 70000 : (Number(v) || 0);
+}
+function setTelecomOffset() {
+  const v = prompt('통신비에서 매달 차감할 회사지원 금액 (원)\n회사에서 통신요금을 지원받는 만큼 경비에서 빼서 이중공제를 방지합니다.\n(0 입력 시 차감 안 함)', loadTelecomOffset());
+  if (v == null) return;
+  const n = parseInt(String(v).replace(/[^0-9]/g, '')) || 0;
+  localStorage.setItem('acc_telecom_offset', String(n));
+  scheduleSheetsBackup();
+  render('tax');
 }
 
 function candMonth(c) {
