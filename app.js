@@ -4367,7 +4367,7 @@ function renderCandidatesPage(el) {
           <td style="text-align:center">${catSel}</td>
           <td style="text-align:center">${statusBadge}</td>
           <td><div class="td-actions">
-            <button class="btn btn-ghost btn-sm" title="소명 메모" onclick="openCandidateMemoModal(${realIdx})">${c.memo ? '📝' : '✏️'}</button>
+            <button class="btn btn-ghost btn-sm" title="수정 (금액·가맹점·메모)" onclick="openCandidateMemoModal(${realIdx})">${c.memo ? '📝' : '✏️'}</button>
             ${actions}
           </div></td>
         </tr>`;
@@ -4445,10 +4445,22 @@ function setCandidateCategory(idx, category) {
 function openCandidateMemoModal(idx) {
   const c = _candidatesCache[idx];
   if (!c) return;
-  openModal('소명 메모', `
+  const dateOnly = String(c.date || '').slice(0, 10);
+  openModal('항목 수정 / 소명 메모', `
     <div style="display:flex;flex-direction:column;gap:12px">
-      <div style="font-size:12px;color:var(--gray-500)">
-        ${c.date || ''} · ${c.merchant || ''} · ${(Number(c.amount)||0).toLocaleString('ko-KR')}원
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
+        <div class="form-group">
+          <label>날짜</label>
+          <input id="cm-date" type="date" class="form-control" value="${dateOnly}">
+        </div>
+        <div class="form-group">
+          <label>금액 (원)</label>
+          <input id="cm-amount" type="text" inputmode="numeric" class="form-control" value="${numFmt(Number(c.amount)||0)}" oninput="fmtField(this)" style="text-align:right">
+        </div>
+      </div>
+      <div class="form-group">
+        <label>가맹점명</label>
+        <input id="cm-merchant" type="text" class="form-control" value="${(c.merchant||'').replace(/"/g,'&quot;')}">
       </div>
       <div class="form-group">
         <label>메모 <span style="font-size:11px;font-weight:400;color:var(--gray-500)">업무 관련성·동석자 등 (세무조사 소명 대비)</span></label>
@@ -4465,8 +4477,14 @@ function openCandidateMemoModal(idx) {
 function saveCandidateMemo(idx) {
   const c = _candidatesCache[idx];
   if (!c) return;
-  const memo = (document.getElementById('cm-memo')?.value || '').trim();
-  _candidatesCache[idx] = { ...c, memo };
+  const memo     = (document.getElementById('cm-memo')?.value || '').trim();
+  const merchant = (document.getElementById('cm-merchant')?.value || '').trim() || c.merchant;
+  const amount   = parseNum('cm-amount');
+  const newDate  = document.getElementById('cm-date')?.value;
+  // 시각이 있던 항목은 날짜만 바꿔도 시각 유지
+  const oldTime  = String(c.date || '').slice(10);
+  const date     = newDate ? newDate + oldTime : c.date;
+  _candidatesCache[idx] = { ...c, memo, merchant, amount, date };
   saveCandidates(_candidatesCache);
   closeModal();
   renderCandidatesPage(document.getElementById('page-candidates'));
