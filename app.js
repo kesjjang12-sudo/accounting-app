@@ -595,7 +595,7 @@ function openTaxPaymentModal() {
 function saveTaxPayment() {
   const date   = document.getElementById('tp-date').value;
   const cat    = document.getElementById('tp-cat').value;
-  const amount = parseNum(document.getElementById('tp-amount'));
+  const amount = parseNum('tp-amount');
   const memo   = document.getElementById('tp-memo').value.trim();
   if (!date) { alert('날짜를 입력하세요.'); return; }
   if (!amount) { alert('금액을 입력하세요.'); return; }
