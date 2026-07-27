@@ -522,6 +522,8 @@ function _updateSelUI(page) {
   if (bulkBtn) { bulkBtn.textContent = `✏ 일괄 변경 (${s.size}건)`; bulkBtn.style.display = s.size ? '' : 'none'; }
   const moveBtn = document.getElementById(`sel-move-${page}`);
   if (moveBtn) { moveBtn.textContent = `🔁 사업체 이동 (${s.size}건)`; moveBtn.style.display = s.size ? '' : 'none'; }
+  const copyBtn = document.getElementById(`sel-copy-${page}`);
+  if (copyBtn) { copyBtn.textContent = `📋 복사 (${s.size}건)`; copyBtn.style.display = s.size ? '' : 'none'; }
   const all = document.querySelectorAll(`.sel-cb[data-page="${page}"]`);
   const hdr = document.getElementById(`sel-all-${page}`);
   if (hdr && all.length) hdr.checked = s.size === all.length;
@@ -545,6 +547,39 @@ function goToTxFromDetail(date, vendorId) {
   txSearch = '';
   txFilter = { type: '', vendorId: vendorId || '', dateFrom: date, dateTo: date, paid: '' };
   navigate('transactions');
+}
+
+// 거래처 구분(매출/매입)에 따라 필터링된 옵션 빌드
+function _buildVendorOpts(type, selectedId) {
+  return vendors
+    .filter(v => !type || v.accountType === type || v.accountType === '매출+매입')
+    .map(v => `<option value="${v.id}" ${v.id === selectedId ? 'selected' : ''}>${v.companyName}</option>`)
+    .join('');
+}
+
+// 거래 복사 (행 단위)
+function copyTransaction(id) {
+  const t = transactions.find(t => t.id === id);
+  if (!t) return;
+  const copy = { ...t, id: uid(), date: today(), isPaid: false, paidAt: '', paidMethod: '' };
+  copy.items = t.items.map(i => ({ ...i, _id: uid() }));
+  openTransactionModal(copy);
+}
+
+// 선택 거래 일괄 복사 (오늘 날짜, 미결제로)
+function copySelectedTx() {
+  const ids = [..._sel.txRows];
+  if (!ids.length) return;
+  ids.forEach(id => {
+    const t = transactions.find(t => t.id === id);
+    if (!t) return;
+    const copy = { ...t, id: uid(), date: today(), isPaid: false, paidAt: '', paidMethod: '' };
+    copy.items = t.items.map(i => ({ ...i, _id: uid() }));
+    transactions.push(copy);
+  });
+  saveTransactions();
+  _sel.txRows.clear();
+  render(currentPage);
 }
 
 // 선택한 거래를 다른 사업체로 이동
@@ -1910,7 +1945,7 @@ function txFilteredList() {
   if (txFilter.paid === 'paid')   filtered = filtered.filter(t =>  t.isPaid);
   if (txSearch) filtered = filtered.filter(t => {
     const v = vendors.find(v => v.id === t.vendorId);
-    return (v?v.companyName:'').includes(txSearch) || t.items.some(i => i.itemName.includes(txSearch));
+    return (v?v.companyName:'').includes(txSearch) || (t.payeeName||'').includes(txSearch) || t.items.some(i => i.itemName.includes(txSearch));
   });
   return filtered;
 }
@@ -1948,7 +1983,7 @@ function txRowsHtml(filtered) {
       <td style="text-align:center;width:36px"><input type="checkbox" class="sel-cb tx-checkbox" data-page="txRows" value="${t.id}" ${_sel.txRows.has(t.id)?'checked':''} onclick="selCbClick(event,'txRows','${t.id}')"></td>
       <td>${t.date}</td>
       <td>${t.type==='매출'?'<span class="badge badge-sales">매출</span>':'<span class="badge badge-purchase">매입</span>'}${bizCatBadge}${acCatBadge}</td>
-      <td>${v?v.companyName:'-'}</td>
+      <td>${v ? v.companyName : (t.payeeName ? `<span style="color:var(--gray-600)">${t.payeeName}</span>` : '-')}</td>
       <td style="color:var(--gray-700);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${jeokyo}</td>
       <td>${t.paymentMethod||'-'}</td>
       <td style="text-align:right">${fmt(amt)}원</td>
@@ -1959,6 +1994,7 @@ function txRowsHtml(filtered) {
         ${!t.isPaid ? `<button class="btn btn-ghost btn-sm" onclick="quickPaid('${t.id}')">✓ 완료</button>` : ''}
         <button class="btn btn-ghost btn-sm" onclick="printTxStatement('${t.id}')">🖨</button>
         <button class="btn btn-ghost btn-sm" onclick="viewTransaction('${t.id}')">상세</button>
+        <button class="btn btn-ghost btn-sm" onclick="copyTransaction('${t.id}')">복사</button>
         <button class="btn btn-ghost btn-sm" onclick="editTransaction('${t.id}')">수정</button>
         <button class="btn btn-danger btn-sm" onclick="deleteTransaction('${t.id}')">삭제</button>
       </div></td>
@@ -1986,6 +2022,7 @@ function renderTransactions(el) {
     <div class="filter-bar">
       <button id="sel-del-txRows" class="btn btn-danger btn-sm" style="display:none" onclick="deleteSelected('txRows')">선택 삭제</button>
       <button id="sel-bulk-txRows" class="btn btn-primary btn-sm" style="display:none" onclick="bulkEditTxModal()">✏ 일괄 변경</button>
+      <button id="sel-copy-txRows" class="btn btn-ghost btn-sm" style="display:none" onclick="copySelectedTx()">📋 복사</button>
       <button id="sel-move-txRows" class="btn btn-ghost btn-sm" style="display:none" onclick="moveTxBizModal()">🔁 사업체 이동</button>
       <input class="form-control search-input" id="tx-search" placeholder="거래처명 / 품목명 검색" value="${txSearch}">
       <select class="form-control" id="tx-type"><option value="">전체 구분</option><option value="매출" ${txFilter.type==='매출'?'selected':''}>매출</option><option value="매입" ${txFilter.type==='매입'?'selected':''}>매입</option></select>
@@ -2088,14 +2125,16 @@ function editTransaction(id) {
 
 function openTransactionModal(prefill = null, editId = null) {
   txLineItems = prefill ? prefill.items.map(i => ({...i})) : [newLineItem()];
-  const vOpts = vendors.map(v => `<option value="${v.id}">${v.companyName} (${v.accountType})</option>`).join('');
 
   const initType   = prefill?.type || '매출';
   const initAcCat  = prefill?.accountCategory || (initType==='매입' ? '매입(상품)' : '매출');
   const salesOpts  = `<option value="매출" ${initAcCat==='매출'?'selected':''}>매출</option>`;
-  const purchOpts  = ['매입(상품)','매입(경비)','매입(원재료)','매입(기타)']
+  const purchOpts  = ['매입(상품)','매입(경비)','매입(원재료)','매입(기타)','세금납부(부가세)','세금납부(소득세)','세금납부(기타)']
     .map(o=>`<option value="${o}" ${initAcCat===o?'selected':''}>${o}</option>`).join('');
   const acOpts     = initType==='매출' ? salesOpts : purchOpts;
+  const initVendor = prefill?.vendorId || '';
+  const vOpts      = _buildVendorOpts(initType, initVendor);
+  const payeeShow  = !initVendor ? '' : 'none';
 
   const html = `
     <div class="form-grid">
@@ -2111,8 +2150,11 @@ function openTransactionModal(prefill = null, editId = null) {
       </div>
       <div class="form-group"><label>거래처</label>
         <select id="tx-vendor-sel" class="form-control" onchange="onTxVendorChange(this)">
-          <option value="">거래처 선택</option>${vOpts}
+          <option value="">거래처 선택 (없으면 아래 직접입력)</option>${vOpts}
         </select>
+      </div>
+      <div class="form-group" id="tx-payee-group" style="display:${payeeShow}"><label>지급처 직접입력 <span style="font-size:11px;color:var(--gray-400)">(거래처 미등록 시)</span></label>
+        <input id="tx-payee-name" class="form-control" placeholder="예: 홍길동 기사, 일용직, 국세청 등" value="${prefill?.payeeName||''}">
       </div>
       <div class="form-group"><label>결제방법</label>
         <select id="tx-payment" class="form-control">
@@ -2161,7 +2203,6 @@ function openTransactionModal(prefill = null, editId = null) {
 
   openModal(editId ? '거래 수정' : '거래 입력', html, true);
   renderLineItems();
-  if (prefill) { document.getElementById('tx-vendor-sel').value = prefill.vendorId || ''; }
 }
 
 function togglePaidSection(cb) {
@@ -2258,6 +2299,8 @@ function onLineChange(input) {
 }
 
 function onTxVendorChange(sel) {
+  const grp = document.getElementById('tx-payee-group');
+  if (grp) grp.style.display = sel.value ? 'none' : '';
   const v  = vendors.find(v => v.id === sel.value);
   const tg = document.getElementById('tx-type-group');
   if (!v || !tg) return;
@@ -2272,8 +2315,14 @@ function onTxTypeChange(type) {
   if (type === '매출') {
     sel.innerHTML = `<option value="매출">매출</option>`;
   } else {
-    const opts = ['매입(상품)','매입(경비)','매입(원재료)','매입(기타)'];
+    const opts = ['매입(상품)','매입(경비)','매입(원재료)','매입(기타)','세금납부(부가세)','세금납부(소득세)','세금납부(기타)'];
     sel.innerHTML = opts.map(o => `<option value="${o}" ${cur===o?'selected':''}>${o}</option>`).join('');
+  }
+  // 거래처 드롭다운을 구분(매출/매입)에 맞게 다시 필터링
+  const vSel = document.getElementById('tx-vendor-sel');
+  if (vSel) {
+    const curV = vSel.value;
+    vSel.innerHTML = `<option value="">거래처 선택 (없으면 아래 직접입력)</option>` + _buildVendorOpts(type, curV);
   }
   // 이미 선택된 품목들의 단가를 구분에 맞게 갱신
   let changed = false;
@@ -2298,6 +2347,7 @@ function saveTx(cont) {
   const type    = document.querySelector('input[name="tx-type"]:checked')?.value;
   if (!type) { alert('구분을 선택하세요.'); return; }
   const vendorId       = document.getElementById('tx-vendor-sel').value;
+  const payeeName      = vendorId ? '' : (document.getElementById('tx-payee-name')?.value.trim() || '');
   const paymentMethod  = document.getElementById('tx-payment').value;
   const isPaid         = document.getElementById('tx-is-paid').checked;
   const autoPurchase   = document.getElementById('tx-auto-purchase')?.checked;
@@ -2316,14 +2366,14 @@ function saveTx(cont) {
     const idx = transactions.findIndex(t => t.id === editId);
     if (idx > -1) {
       const orig = transactions[idx];
-      transactions[idx] = { ...orig, date, type, accountCategory, bizCategory, vendorId, paymentMethod,
+      transactions[idx] = { ...orig, date, type, accountCategory, bizCategory, vendorId, payeeName, paymentMethod,
         isPaid, paidAt: isPaid ? (orig.paidAt || date) : '', paidMethod: isPaid ? (orig.paidMethod || paymentMethod) : '',
         items: validItems };
     }
     saveTransactions(); closeModal(); render(currentPage); return;
   }
 
-  transactions.push({ id: uid(), date, type, accountCategory, bizCategory, vendorId, paymentMethod, isPaid, paidAt: isPaid ? date : '', paidMethod: isPaid ? paymentMethod : '', items: validItems });
+  transactions.push({ id: uid(), date, type, accountCategory, bizCategory, vendorId, payeeName, paymentMethod, isPaid, paidAt: isPaid ? date : '', paidMethod: isPaid ? paymentMethod : '', items: validItems });
 
   if (autoPurchase && type === '매출') {
     const pItems = validItems.map(line => {
@@ -2364,7 +2414,7 @@ function getFilteredTransactions() {
   if (txFilter.paid === 'paid')   list = list.filter(t =>  t.isPaid);
   if (txSearch) list = list.filter(t => {
     const v = vendors.find(v => v.id === t.vendorId);
-    return (v?v.companyName:'').includes(txSearch) || t.items.some(i => i.itemName.includes(txSearch));
+    return (v?v.companyName:'').includes(txSearch) || (t.payeeName||'').includes(txSearch) || t.items.some(i => i.itemName.includes(txSearch));
   });
   return list;
 }
