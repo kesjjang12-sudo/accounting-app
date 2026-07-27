@@ -858,10 +858,11 @@ function renderSummary(el) {
 
     ${periodFilterHTML}
 
-    <div style="display:flex;gap:4px;margin-bottom:20px">
+    <div style="display:flex;gap:4px;margin-bottom:20px;flex-wrap:wrap">
       <button class="period-btn ${summaryTab==='거래처별'?'active':''}" onclick="switchSummaryTab('거래처별')">🏢 거래처별 집계</button>
       <button class="period-btn ${summaryTab==='계정별'?'active':''}" onclick="switchSummaryTab('계정별')">📋 계정별 집계</button>
       <button class="period-btn ${summaryTab==='판매현황'?'active':''}" onclick="switchSummaryTab('판매현황')">📦 판매현황</button>
+      <button class="period-btn ${summaryTab==='품목수익'?'active':''}" onclick="switchSummaryTab('품목수익')">📊 품목별 수익분석</button>
     </div>
 
     <div id="summary-content"></div>`;
@@ -879,6 +880,7 @@ function renderSummary(el) {
   const content = document.getElementById('summary-content');
   if (summaryTab === '거래처별')  renderVendorSummaryTab(content, srcTx);
   else if (summaryTab === '계정별') renderAccountSummaryTab(content, srcTx);
+  else if (summaryTab === '품목수익') renderItemProfitTab(content, srcTx);
   else renderSalesStatusTab(content, srcTx);
 }
 
@@ -1033,6 +1035,105 @@ function exportVendorSummaryXlsx() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '거래처별집계');
   XLSX.writeFile(wb, `거래처별집계_${start}_${end}.xlsx`);
+}
+
+function renderItemProfitTab(el, filtered) {
+  const map = {};
+  filtered.forEach(t => {
+    t.items.forEach(i => {
+      const key = i.itemName || '(품목명 없음)';
+      if (!map[key]) map[key] = { itemName: key, buyQty: 0, buyAmt: 0, sellQty: 0, sellAmt: 0 };
+      const total = (i.amount || 0) + (i.tax || 0);
+      if (t.type === '매입') {
+        map[key].buyQty  += i.quantity || 0;
+        map[key].buyAmt  += total;
+      } else {
+        map[key].sellQty += i.quantity || 0;
+        map[key].sellAmt += total;
+      }
+    });
+  });
+
+  const list = Object.values(map).sort((a, b) => (b.sellAmt + b.buyAmt) - (a.sellAmt + a.buyAmt));
+
+  let grandBuy = 0, grandSell = 0;
+  list.forEach(r => { grandBuy += r.buyAmt; grandSell += r.sellAmt; });
+  const grandMargin = grandSell - grandBuy;
+
+  const rows = list.map(r => {
+    const margin   = r.sellAmt - r.buyAmt;
+    const costRate = r.sellAmt ? Math.round(r.buyAmt / r.sellAmt * 100) : '-';
+    const marginColor = margin > 0 ? 'color:#16a34a' : margin < 0 ? 'color:#dc2626' : '';
+    const barBuy  = grandBuy  ? Math.round(r.buyAmt  / Math.max(grandBuy, grandSell) * 80) : 0;
+    const barSell = grandSell ? Math.round(r.sellAmt / Math.max(grandBuy, grandSell) * 80) : 0;
+    return `<tr>
+      <td><strong>${r.itemName}</strong></td>
+      <td style="text-align:right;color:var(--gray-500)">${r.buyQty ? fmt(r.buyQty) : '-'}</td>
+      <td style="text-align:right">
+        ${r.buyAmt ? `<span style="color:#3b82f6">${fmt(r.buyAmt)}원</span>` : '<span style="color:var(--gray-300)">-</span>'}
+        ${r.buyAmt ? `<div style="margin-top:3px;height:4px;width:${barBuy}%;background:#bfdbfe;border-radius:2px"></div>` : ''}
+      </td>
+      <td style="text-align:right;color:var(--gray-500)">${r.sellQty ? fmt(r.sellQty) : '-'}</td>
+      <td style="text-align:right">
+        ${r.sellAmt ? `<span style="color:#16a34a">${fmt(r.sellAmt)}원</span>` : '<span style="color:var(--gray-300)">-</span>'}
+        ${r.sellAmt ? `<div style="margin-top:3px;height:4px;width:${barSell}%;background:#bbf7d0;border-radius:2px"></div>` : ''}
+      </td>
+      <td style="text-align:right;${marginColor}"><strong>${margin !== 0 ? fmt(margin) + '원' : '-'}</strong></td>
+      <td style="text-align:center">${r.sellAmt && r.buyAmt ? `<span style="font-size:12px">${costRate}%</span>` : '-'}</td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📊</div><p>해당 기간 거래 없음</p></div></td></tr>`;
+
+  const marginColor = grandMargin >= 0 ? 'color:#16a34a' : 'color:#dc2626';
+
+  el.innerHTML = `
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+      <div class="summary-section-title" style="margin:0">품목별 수익분석</div>
+      <div style="font-size:12px;color:var(--gray-400)">매입원가 vs 매출액 비교 · 운임비 등 기타 품목은 별도 행으로 표시</div>
+    </div>
+    <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
+      <div class="card" style="flex:1;min-width:140px;padding:14px 18px">
+        <div class="card-title">총 매입원가</div>
+        <div style="font-size:18px;font-weight:700;color:#3b82f6">${fmt(grandBuy)}원</div>
+      </div>
+      <div class="card" style="flex:1;min-width:140px;padding:14px 18px">
+        <div class="card-title">총 매출액</div>
+        <div style="font-size:18px;font-weight:700;color:#16a34a">${fmt(grandSell)}원</div>
+      </div>
+      <div class="card" style="flex:1;min-width:140px;padding:14px 18px">
+        <div class="card-title">총 마진</div>
+        <div style="font-size:18px;font-weight:700;${marginColor}">${fmt(Math.abs(grandMargin))}원${grandMargin < 0 ? ' (손실)' : ''}</div>
+      </div>
+      <div class="card" style="flex:1;min-width:140px;padding:14px 18px">
+        <div class="card-title">전체 원가율</div>
+        <div style="font-size:18px;font-weight:700">${grandSell ? Math.round(grandBuy/grandSell*100) + '%' : '-'}</div>
+      </div>
+    </div>
+    <div class="table-wrapper">
+      <table>
+        <thead><tr>
+          <th>품목명</th>
+          <th style="text-align:right">매입수량</th>
+          <th style="text-align:right">매입금액 (원가)</th>
+          <th style="text-align:right">매출수량</th>
+          <th style="text-align:right">매출금액</th>
+          <th style="text-align:right">마진</th>
+          <th style="text-align:center">원가율</th>
+        </tr></thead>
+        <tbody>${rows}</tbody>
+        <tfoot><tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">
+          <td>합 계</td>
+          <td></td>
+          <td style="text-align:right;color:#3b82f6">${fmt(grandBuy)}원</td>
+          <td></td>
+          <td style="text-align:right;color:#16a34a">${fmt(grandSell)}원</td>
+          <td style="text-align:right;${marginColor}">${fmt(Math.abs(grandMargin))}원</td>
+          <td style="text-align:center">${grandSell ? Math.round(grandBuy/grandSell*100) + '%' : '-'}</td>
+        </tr></tfoot>
+      </table>
+    </div>
+    <div style="margin-top:10px;font-size:11px;color:var(--gray-400)">
+      💡 운임비·기타 경비는 별도 품목명으로 입력된 경우 아래 별도 행으로 표시됩니다. 마진 = 매출 - 매입(부가세 포함).
+    </div>`;
 }
 
 function renderSalesStatusTab(el, filtered) {
