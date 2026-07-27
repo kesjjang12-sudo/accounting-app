@@ -1395,11 +1395,17 @@ function changeReportYear(year) {
 
 // ── VENDOR DETAIL MODAL ───────────────────────────────────
 let currentDetailVendorId = null;
+let currentDetailRange    = { start: null, end: null };
+
+function reopenVendorDetail() {
+  openVendorDetail(currentDetailVendorId, currentDetailRange.start, currentDetailRange.end);
+}
 
 function openVendorDetail(vendorId, rangeStart, rangeEnd) {
   currentDetailVendorId = vendorId;
   const vendor = vendors.find(v => v.id === vendorId);
   const { start, end } = (rangeStart && rangeEnd) ? { start: rangeStart, end: rangeEnd } : getPeriodRange(currentPeriod);
+  currentDetailRange = { start, end };
 
   const vendorTxs = transactions
     .filter(t => t.vendorId === vendorId && t.date >= start && t.date <= end)
@@ -1422,7 +1428,7 @@ function openVendorDetail(vendorId, rangeStart, rangeEnd) {
           : `<span class="badge" style="background:#fef2f2;color:#dc2626">미지급</span>`);
     const markBtn = !t.isPaid
       ? `<button class="btn btn-ghost btn-sm" style="margin-top:4px;padding:2px 8px" onclick="openMarkPaidModal('${t.id}')">결제처리</button>`
-      : '';
+      : `<button class="btn btn-ghost btn-sm" style="margin-top:4px;padding:2px 8px;color:var(--gray-400)" onclick="unmarkPaid('${t.id}')">↩ 취소</button>`;
     return `<tr>
       <td style="text-align:center"><input type="checkbox" class="tx-checkbox" value="${t.id}" checked></td>
       <td><a class="vendor-link" onclick="goToTxFromDetail('${t.date}','${vendorId}')" title="거래내역에서 이 날짜 보기">${t.date}</a></td>
@@ -1435,9 +1441,7 @@ function openVendorDetail(vendorId, rangeStart, rangeEnd) {
     </tr>`;
   }).join('') || `<tr><td colspan="8"><div class="empty-state" style="padding:24px"><div class="empty-icon">📭</div><p>해당 기간 거래 없음</p></div></td></tr>`;
 
-  const periodStr = currentPeriod === 'custom'
-    ? `${customDateFrom || '전체'} ~ ${customDateTo || '전체'}`
-    : periodLabel(currentPeriod);
+  const periodStr = `${start} ~ ${end}`;
 
   const html = `
     <input type="hidden" id="detail-vendor-id" value="${vendorId}">
@@ -1480,6 +1484,7 @@ function openVendorDetail(vendorId, rangeStart, rangeEnd) {
 
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">닫기</button>
+      <button class="btn btn-primary btn-sm" onclick="bulkMarkPaid()">선택 결제완료</button>
     </div>`;
 
   openModal(`${vendor ? vendor.companyName : ''} — 거래 상세`, html, true);
@@ -1530,7 +1535,7 @@ function openMarkPaidModal(txId) {
       </div>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-ghost" onclick="openVendorDetail('${currentDetailVendorId}')">취소</button>
+      <button class="btn btn-ghost" onclick="reopenVendorDetail()">취소</button>
       <button class="btn btn-primary" onclick="confirmPaid('${txId}')">결제 처리 완료</button>
     </div>`;
 
@@ -1549,11 +1554,38 @@ function confirmPaid(txId) {
     saveTransactions();
   }
   if (currentDetailVendorId) {
-    openVendorDetail(currentDetailVendorId);
+    reopenVendorDetail();
   } else {
     closeModal();
     render(currentPage);
   }
+}
+
+function unmarkPaid(txId) {
+  const idx = transactions.findIndex(t => t.id === txId);
+  if (idx === -1) return;
+  if (!confirm('결제완료를 취소하시겠습니까?')) return;
+  transactions[idx].isPaid     = false;
+  transactions[idx].paidAt     = '';
+  transactions[idx].paidMethod = '';
+  saveTransactions();
+  reopenVendorDetail();
+}
+
+function bulkMarkPaid() {
+  const checked = [...document.querySelectorAll('.tx-checkbox:checked')].map(cb => cb.value);
+  const unpaid  = checked.filter(id => { const t = transactions.find(t => t.id === id); return t && !t.isPaid; });
+  if (!unpaid.length) { alert('선택된 미결제 거래가 없습니다.'); return; }
+  if (!confirm(`${unpaid.length}건을 오늘(${today()}) 결제완료 처리하시겠습니까?`)) return;
+  unpaid.forEach(id => {
+    const idx = transactions.findIndex(t => t.id === id);
+    if (idx === -1) return;
+    transactions[idx].isPaid     = true;
+    transactions[idx].paidAt     = today();
+    transactions[idx].paidMethod = transactions[idx].paymentMethod || '현금';
+  });
+  saveTransactions();
+  reopenVendorDetail();
 }
 
 // 한 번에 결제완료 (오늘 날짜, 기존 결제방법)
