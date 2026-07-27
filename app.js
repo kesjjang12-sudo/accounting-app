@@ -566,6 +566,49 @@ function copyTransaction(id) {
   openTransactionModal(copy);
 }
 
+// 세금납부 빠른 입력 (매입/세금납부 기본값으로 폼 오픈)
+function openTaxPaymentModal() {
+  openModal('세금납부 입력', `
+    <div style="display:flex;flex-direction:column;gap:14px">
+      <div class="form-group"><label>날짜 *</label><input id="tp-date" class="form-control" type="date" value="${today()}"></div>
+      <div class="form-group"><label>세금 종류 *</label>
+        <select id="tp-cat" class="form-control">
+          <option value="세금납부(부가세)">부가세</option>
+          <option value="세금납부(소득세)">소득세 / 종합소득세</option>
+          <option value="세금납부(기타)">기타 세금</option>
+        </select>
+      </div>
+      <div class="form-group"><label>금액 (원) *</label>
+        <input id="tp-amount" class="form-control" type="text" inputmode="numeric" placeholder="0" oninput="onNumInput(this)">
+      </div>
+      <div class="form-group"><label>메모</label>
+        <input id="tp-memo" class="form-control" placeholder="예: 1기 확정 부가세, 2025년 종소세 등">
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-ghost" onclick="closeModal()">취소</button>
+        <button class="btn btn-primary" onclick="saveTaxPayment()">저장</button>
+      </div>
+    </div>
+  `);
+}
+function saveTaxPayment() {
+  const date   = document.getElementById('tp-date').value;
+  const cat    = document.getElementById('tp-cat').value;
+  const amount = parseNum(document.getElementById('tp-amount'));
+  const memo   = document.getElementById('tp-memo').value.trim();
+  if (!date) { alert('날짜를 입력하세요.'); return; }
+  if (!amount) { alert('금액을 입력하세요.'); return; }
+  transactions.push({
+    id: uid(), date, type: '매입', accountCategory: cat, bizCategory: '기타',
+    vendorId: '', payeeName: memo || cat.replace('세금납부(','').replace(')','') + ' 납부',
+    paymentMethod: '계좌이체', isPaid: true, paidAt: date, paidMethod: '계좌이체',
+    items: [{ _id: uid(), itemName: memo || cat, unit: '건', quantity: 1, unitPrice: amount, amount, tax: 0, taxExempt: true, notes: '' }]
+  });
+  saveTransactions();
+  closeModal();
+  render(currentPage);
+}
+
 // 선택 거래 일괄 복사 (오늘 날짜, 미결제로)
 function copySelectedTx() {
   const ids = [..._sel.txRows];
@@ -2016,6 +2059,7 @@ function renderTransactions(el) {
           <input type="file" accept=".xlsx,.xls" style="display:none" onchange="uploadTransactionsExcel(this)">
         </label>
         <button class="btn btn-ghost" onclick="downloadTransactionsExcel()">📊 엑셀 다운로드</button>
+        <button class="btn btn-ghost" onclick="openTaxPaymentModal()">💸 세금납부</button>
         <button class="btn btn-primary" onclick="openTransactionModal()">+ 거래 입력</button>
       </div>
     </div>
