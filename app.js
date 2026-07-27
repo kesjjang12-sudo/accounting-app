@@ -455,8 +455,9 @@ let summaryAllBiz     = false;
 let summaryPeriod     = 'month';
 let summaryCustomFrom = '';
 let summaryCustomTo   = '';
-let summaryVendorSort   = 'total_desc';
-let summaryVendorFilter = '';
+let summaryVendorSort      = 'total_desc';
+let summaryVendorFilter    = '';
+let summaryUnpaidOnly      = false;
 let summarySalesSort    = 'date_desc';
 let summarySalesType    = '';
 let summarySalesVendorId = '';
@@ -912,14 +913,15 @@ function buildSummaryPeriodFilter() {
 function switchSummaryTab(tab) { summaryTab = tab; render('summary'); }
 
 function renderVendorSummaryTab(el, filtered) {
+  const { start, end } = getSummaryRange();
   const src = summaryVendorFilter ? filtered.filter(t => t.type === summaryVendorFilter) : filtered;
   const byVendor = {};
   src.forEach(t => {
     const key = t.vendorId || '__etc__';
     const v   = vendors.find(v => v.id === t.vendorId);
     if (!byVendor[key]) byVendor[key] = {
-      name: v ? v.companyName : '(기타)', vendorId: t.vendorId || '',
-      sales: 0, salesUnpaid: 0, purchase: 0, purchasePaid: 0
+      name: v ? v.companyName : (t.payeeName || '(기타)'), vendorId: t.vendorId || '',
+      sales: 0, salesUnpaid: 0, purchase: 0, purchaseUnpaid: 0
     };
     const total = t.items.reduce((s, i) => s + i.amount + i.tax, 0);
     if (t.type === '매출') {
@@ -927,36 +929,39 @@ function renderVendorSummaryTab(el, filtered) {
       if (!t.isPaid) byVendor[key].salesUnpaid += total;
     } else {
       byVendor[key].purchase += total;
-      if (t.isPaid) byVendor[key].purchasePaid += total;
+      if (!t.isPaid) byVendor[key].purchaseUnpaid += total;
     }
   });
 
   let list = Object.values(byVendor);
+  if (summaryUnpaidOnly) list = list.filter(v => v.purchaseUnpaid > 0);
+
   const sortFns = {
-    'total_desc': (a,b) => (b.sales+b.purchase)-(a.sales+a.purchase),
-    'total_asc':  (a,b) => (a.sales+a.purchase)-(b.sales+b.purchase),
-    'sales_desc': (a,b) => b.sales-a.sales,
-    'sales_asc':  (a,b) => a.sales-b.sales,
-    'purch_desc': (a,b) => b.purchase-a.purchase,
-    'purch_asc':  (a,b) => a.purchase-b.purchase,
-    'name_asc':   (a,b) => a.name.localeCompare(b.name, 'ko'),
-    'name_desc':  (a,b) => b.name.localeCompare(a.name, 'ko'),
+    'total_desc':   (a,b) => (b.sales+b.purchase)-(a.sales+a.purchase),
+    'total_asc':    (a,b) => (a.sales+a.purchase)-(b.sales+b.purchase),
+    'sales_desc':   (a,b) => b.sales-a.sales,
+    'sales_asc':    (a,b) => a.sales-b.sales,
+    'purch_desc':   (a,b) => b.purchase-a.purchase,
+    'purch_asc':    (a,b) => a.purchase-b.purchase,
+    'unpaid_desc':  (a,b) => b.purchaseUnpaid-a.purchaseUnpaid,
+    'name_asc':     (a,b) => a.name.localeCompare(b.name, 'ko'),
+    'name_desc':    (a,b) => b.name.localeCompare(a.name, 'ko'),
   };
   list.sort(sortFns[summaryVendorSort] || sortFns['total_desc']);
 
-  let totPurch=0, totPurchPaid=0, totSales=0, totSalesUnpaid=0;
-  list.forEach(v=>{ totPurch+=v.purchase; totPurchPaid+=v.purchasePaid; totSales+=v.sales; totSalesUnpaid+=v.salesUnpaid; });
+  let totPurch=0, totUnpaid=0, totSales=0, totSalesUnpaid=0;
+  list.forEach(v=>{ totPurch+=v.purchase; totUnpaid+=v.purchaseUnpaid; totSales+=v.sales; totSalesUnpaid+=v.salesUnpaid; });
 
   const rows = list.map(v => {
     const nameCell = v.vendorId
-      ? `<a class="vendor-link" onclick="openVendorDetail('${v.vendorId}')">${v.name}</a>`
+      ? `<a class="vendor-link" onclick="openVendorDetail('${v.vendorId}','${start}','${end}')">${v.name}</a>`
       : v.name;
     return `<tr>
-      <td style="text-align:right;color:var(--success)">${v.purchase ? fmt(v.purchase) : ''}</td>
-      <td style="text-align:right;color:var(--danger)">${v.purchasePaid ? fmt(v.purchasePaid) : ''}</td>
+      <td style="text-align:right;color:var(--success)">${v.purchase ? fmt(v.purchase)+'원' : ''}</td>
+      <td style="text-align:right;color:var(--danger);font-weight:${v.purchaseUnpaid?'600':'400'}">${v.purchaseUnpaid ? fmt(v.purchaseUnpaid)+'원' : ''}</td>
       <td style="text-align:center">${nameCell}</td>
-      <td style="text-align:right;color:var(--primary)">${v.sales ? fmt(v.sales) : ''}</td>
-      <td style="text-align:right;color:var(--warning)">${v.salesUnpaid ? fmt(v.salesUnpaid) : ''}</td>
+      <td style="text-align:right;color:var(--primary)">${v.sales ? fmt(v.sales)+'원' : ''}</td>
+      <td style="text-align:right;color:var(--warning)">${v.salesUnpaid ? fmt(v.salesUnpaid)+'원' : ''}</td>
     </tr>`;
   }).join('') || `<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">📭</div><p>해당 기간 거래 없음</p></div></td></tr>`;
 
@@ -967,20 +972,22 @@ function renderVendorSummaryTab(el, filtered) {
         <span style="font-size:12px;font-weight:400;color:var(--gray-500);margin-left:8px">거래처명 클릭 → 상세보기</span>
       </div>
       <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+        <button class="btn btn-sm ${summaryUnpaidOnly?'btn-danger':'btn-ghost'}" onclick="summaryUnpaidOnly=!summaryUnpaidOnly;render('summary')">💸 줄돈 있는 업체만</button>
         <select class="form-control" style="width:100px;padding:5px 8px;font-size:12.5px" onchange="summaryVendorFilter=this.value;render('summary')">
           <option value="" ${summaryVendorFilter===''?'selected':''}>전체</option>
           <option value="매출" ${summaryVendorFilter==='매출'?'selected':''}>매출만</option>
           <option value="매입" ${summaryVendorFilter==='매입'?'selected':''}>매입만</option>
         </select>
         <select class="form-control" style="width:150px;padding:5px 8px;font-size:12.5px" onchange="summaryVendorSort=this.value;render('summary')">
-          <option value="total_desc" ${summaryVendorSort==='total_desc'?'selected':''}>합계 높은순</option>
-          <option value="total_asc"  ${summaryVendorSort==='total_asc'?'selected':''}>합계 낮은순</option>
-          <option value="sales_desc" ${summaryVendorSort==='sales_desc'?'selected':''}>매출 높은순</option>
-          <option value="sales_asc"  ${summaryVendorSort==='sales_asc'?'selected':''}>매출 낮은순</option>
-          <option value="purch_desc" ${summaryVendorSort==='purch_desc'?'selected':''}>매입 높은순</option>
-          <option value="purch_asc"  ${summaryVendorSort==='purch_asc'?'selected':''}>매입 낮은순</option>
-          <option value="name_asc"   ${summaryVendorSort==='name_asc'?'selected':''}>거래처명 가나다순</option>
-          <option value="name_desc"  ${summaryVendorSort==='name_desc'?'selected':''}>거래처명 역순</option>
+          <option value="total_desc"  ${summaryVendorSort==='total_desc'?'selected':''}>합계 높은순</option>
+          <option value="total_asc"   ${summaryVendorSort==='total_asc'?'selected':''}>합계 낮은순</option>
+          <option value="unpaid_desc" ${summaryVendorSort==='unpaid_desc'?'selected':''}>줄돈 높은순</option>
+          <option value="sales_desc"  ${summaryVendorSort==='sales_desc'?'selected':''}>매출 높은순</option>
+          <option value="sales_asc"   ${summaryVendorSort==='sales_asc'?'selected':''}>매출 낮은순</option>
+          <option value="purch_desc"  ${summaryVendorSort==='purch_desc'?'selected':''}>매입 높은순</option>
+          <option value="purch_asc"   ${summaryVendorSort==='purch_asc'?'selected':''}>매입 낮은순</option>
+          <option value="name_asc"    ${summaryVendorSort==='name_asc'?'selected':''}>거래처명 가나다순</option>
+          <option value="name_desc"   ${summaryVendorSort==='name_desc'?'selected':''}>거래처명 역순</option>
         </select>
         <button class="btn btn-ghost btn-sm" onclick="exportVendorSummaryXlsx()">⬇ 엑셀</button>
       </div>
@@ -988,19 +995,19 @@ function renderVendorSummaryTab(el, filtered) {
     <div class="table-wrapper">
       <table>
         <thead><tr>
-          <th style="text-align:right;width:140px;color:var(--success)">매입</th>
-          <th style="text-align:right;width:130px;color:var(--danger)">출돈 (결제)</th>
+          <th style="text-align:right;width:140px;color:var(--success)">매입 합계</th>
+          <th style="text-align:right;width:130px;color:var(--danger)">줄돈 (미지급)</th>
           <th style="text-align:center">거래처</th>
-          <th style="text-align:right;width:140px;color:var(--primary)">매출</th>
+          <th style="text-align:right;width:140px;color:var(--primary)">매출 합계</th>
           <th style="text-align:right;width:130px;color:var(--warning)">받을돈 (미수)</th>
         </tr></thead>
         <tbody>${rows}</tbody>
         <tfoot><tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">
-          <td style="text-align:right;color:var(--success)">${fmt(totPurch)}</td>
-          <td style="text-align:right;color:var(--danger)">${fmt(totPurchPaid)}</td>
+          <td style="text-align:right;color:var(--success)">${fmt(totPurch)}원</td>
+          <td style="text-align:right;color:var(--danger)">${fmt(totUnpaid)}원</td>
           <td style="text-align:center">합 계</td>
-          <td style="text-align:right;color:var(--primary)">${fmt(totSales)}</td>
-          <td style="text-align:right;color:var(--warning)">${fmt(totSalesUnpaid)}</td>
+          <td style="text-align:right;color:var(--primary)">${fmt(totSales)}원</td>
+          <td style="text-align:right;color:var(--warning)">${fmt(totSalesUnpaid)}원</td>
         </tr></tfoot>
       </table>
     </div>`;
@@ -1015,13 +1022,13 @@ function exportVendorSummaryXlsx() {
   src.forEach(t => {
     const key = t.vendorId || '__etc__';
     const v = vendors.find(v => v.id === t.vendorId);
-    if (!byVendor[key]) byVendor[key] = { name: v?v.companyName:'(기타)', sales:0, salesUnpaid:0, purchase:0, purchasePaid:0 };
+    if (!byVendor[key]) byVendor[key] = { name: v?v.companyName:(t.payeeName||'(기타)'), sales:0, salesUnpaid:0, purchase:0, purchaseUnpaid:0 };
     const total = t.items.reduce((s,i)=>s+i.amount+i.tax,0);
     if (t.type==='매출') { byVendor[key].sales+=total; if(!t.isPaid) byVendor[key].salesUnpaid+=total; }
-    else { byVendor[key].purchase+=total; if(t.isPaid) byVendor[key].purchasePaid+=total; }
+    else { byVendor[key].purchase+=total; if(!t.isPaid) byVendor[key].purchaseUnpaid+=total; }
   });
-  const rows = [['거래처','매입','출돈(결제)','매출','받을돈(미수)']];
-  Object.values(byVendor).forEach(v => rows.push([v.name, v.purchase, v.purchasePaid, v.sales, v.salesUnpaid]));
+  const rows = [['거래처','매입합계','줄돈(미지급)','매출합계','받을돈(미수)']];
+  Object.values(byVendor).forEach(v => rows.push([v.name, v.purchase, v.purchaseUnpaid, v.sales, v.salesUnpaid]));
   const ws = XLSX.utils.aoa_to_sheet(rows);
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, '거래처별집계');
@@ -1389,10 +1396,10 @@ function changeReportYear(year) {
 // ── VENDOR DETAIL MODAL ───────────────────────────────────
 let currentDetailVendorId = null;
 
-function openVendorDetail(vendorId) {
+function openVendorDetail(vendorId, rangeStart, rangeEnd) {
   currentDetailVendorId = vendorId;
   const vendor = vendors.find(v => v.id === vendorId);
-  const { start, end } = getPeriodRange(currentPeriod);
+  const { start, end } = (rangeStart && rangeEnd) ? { start: rangeStart, end: rangeEnd } : getPeriodRange(currentPeriod);
 
   const vendorTxs = transactions
     .filter(t => t.vendorId === vendorId && t.date >= start && t.date <= end)
