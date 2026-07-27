@@ -461,6 +461,7 @@ let summaryUnpaidOnly      = false;
 let summarySalesSort    = 'date_desc';
 let summarySalesType    = '';
 let summarySalesVendorId = '';
+let itemMatchWindow     = 14;
 let summaryAccountSort  = 'amt_desc';
 let currentReportYear = new Date().getFullYear();
 
@@ -1038,101 +1039,176 @@ function exportVendorSummaryXlsx() {
 }
 
 function renderItemProfitTab(el, filtered) {
-  const map = {};
+  const SHIPPING_KW = ['운임', '배송', '택배', '화물', '퀵'];
+
+  const purchases = [];
+  const sales     = [];
+  const shippingByDate = {};
+
   filtered.forEach(t => {
+    const vendorName = vendors.find(v => v.id === t.vendorId)?.companyName || t.payeeName || '-';
     t.items.forEach(i => {
-      const key = i.itemName || '(품목명 없음)';
-      if (!map[key]) map[key] = { itemName: key, buyQty: 0, buyAmt: 0, sellQty: 0, sellAmt: 0 };
       const total = (i.amount || 0) + (i.tax || 0);
-      if (t.type === '매입') {
-        map[key].buyQty  += i.quantity || 0;
-        map[key].buyAmt  += total;
-      } else {
-        map[key].sellQty += i.quantity || 0;
-        map[key].sellAmt += total;
+      if (SHIPPING_KW.some(k => (i.itemName || '').includes(k))) {
+        shippingByDate[t.date] = (shippingByDate[t.date] || 0) + total;
+        return;
       }
+      const row = { txId: t.id, date: t.date, vendor: vendorName,
+                    itemName: i.itemName || '(품목명 없음)',
+                    qty: i.quantity || 0, unitPrice: i.unitPrice || 0, total };
+      if (t.type === '매입') purchases.push(row);
+      else sales.push(row);
     });
   });
 
-  const list = Object.values(map).sort((a, b) => (b.sellAmt + b.buyAmt) - (a.sellAmt + a.buyAmt));
+  // 매출 기준 날짜 순 정렬 후 greedy 매칭
+  sales.sort((a, b) => a.date.localeCompare(b.date));
+  const usedPurchases = new Set();
+  const pairs = [];
 
-  let grandBuy = 0, grandSell = 0;
-  list.forEach(r => { grandBuy += r.buyAmt; grandSell += r.sellAmt; });
-  const grandMargin = grandSell - grandBuy;
+  // 날짜별 매출 총수량 (운임 비례 배분용)
+  const saleTotalQtyByDate = {};
+  sales.forEach(s => { saleTotalQtyByDate[s.date] = (saleTotalQtyByDate[s.date] || 0) + s.qty; });
 
-  const rows = list.map(r => {
-    const margin   = r.sellAmt - r.buyAmt;
-    const costRate = r.sellAmt ? Math.round(r.buyAmt / r.sellAmt * 100) : '-';
-    const marginColor = margin > 0 ? 'color:#16a34a' : margin < 0 ? 'color:#dc2626' : '';
-    const barBuy  = grandBuy  ? Math.round(r.buyAmt  / Math.max(grandBuy, grandSell) * 80) : 0;
-    const barSell = grandSell ? Math.round(r.sellAmt / Math.max(grandBuy, grandSell) * 80) : 0;
-    return `<tr>
-      <td><strong>${r.itemName}</strong></td>
-      <td style="text-align:right;color:var(--gray-500)">${r.buyQty ? fmt(r.buyQty) : '-'}</td>
-      <td style="text-align:right">
-        ${r.buyAmt ? `<span style="color:#3b82f6">${fmt(r.buyAmt)}원</span>` : '<span style="color:var(--gray-300)">-</span>'}
-        ${r.buyAmt ? `<div style="margin-top:3px;height:4px;width:${barBuy}%;background:#bfdbfe;border-radius:2px"></div>` : ''}
-      </td>
-      <td style="text-align:right;color:var(--gray-500)">${r.sellQty ? fmt(r.sellQty) : '-'}</td>
-      <td style="text-align:right">
-        ${r.sellAmt ? `<span style="color:#16a34a">${fmt(r.sellAmt)}원</span>` : '<span style="color:var(--gray-300)">-</span>'}
-        ${r.sellAmt ? `<div style="margin-top:3px;height:4px;width:${barSell}%;background:#bbf7d0;border-radius:2px"></div>` : ''}
-      </td>
-      <td style="text-align:right;${marginColor}"><strong>${margin !== 0 ? fmt(margin) + '원' : '-'}</strong></td>
-      <td style="text-align:center">${r.sellAmt && r.buyAmt ? `<span style="font-size:12px">${costRate}%</span>` : '-'}</td>
+  sales.forEach(sale => {
+    let bestIdx = -1, bestDiff = Infinity;
+    purchases.forEach((p, idx) => {
+      if (usedPurchases.has(idx)) return;
+      if (p.itemName !== sale.itemName) return;
+      const diff = Math.abs((new Date(sale.date) - new Date(p.date)) / 86400000);
+      if (diff <= itemMatchWindow && diff < bestDiff) { bestDiff = diff; bestIdx = idx; }
+    });
+
+    const dayShip  = shippingByDate[sale.date] || 0;
+    const dayQty   = saleTotalQtyByDate[sale.date] || 1;
+    const shipShare = sale.qty && dayQty ? Math.round(dayShip * sale.qty / dayQty) : 0;
+
+    if (bestIdx !== -1) {
+      usedPurchases.add(bestIdx);
+      const purchase = purchases[bestIdx];
+      const qtyMatch = purchase.qty === sale.qty;
+      pairs.push({ sale, purchase, shipShare, qtyMatch,
+                   margin: sale.total - purchase.total - shipShare,
+                   status: qtyMatch ? 'ok' : 'qty_mismatch' });
+    } else {
+      pairs.push({ sale, purchase: null, shipShare, qtyMatch: false, margin: null, status: 'unmatched_sale' });
+    }
+  });
+
+  purchases.forEach((p, idx) => {
+    if (!usedPurchases.has(idx))
+      pairs.push({ sale: null, purchase: p, shipShare: 0, qtyMatch: false, margin: null, status: 'unmatched_purchase' });
+  });
+
+  let totalBuy = 0, totalSell = 0, totalShip = 0, totalMargin = 0;
+  pairs.forEach(p => {
+    if (p.purchase) totalBuy  += p.purchase.total;
+    if (p.sale)     totalSell += p.sale.total;
+    totalShip   += p.shipShare;
+    if (p.margin !== null) totalMargin += p.margin;
+  });
+
+  const rows = pairs.map(({ sale, purchase, shipShare, qtyMatch, margin, status }) => {
+    const itemName = (purchase || sale).itemName;
+    let statusBadge = '', rowBg = '';
+    if (status === 'ok')               { statusBadge = '<span style="color:#16a34a">✅ 매칭</span>'; }
+    else if (status === 'qty_mismatch'){ statusBadge = '<span style="color:#d97706">⚠️ 수량 불일치</span>'; rowBg = 'background:rgba(251,191,36,0.06)'; }
+    else if (status === 'unmatched_sale')    { statusBadge = '<span style="color:#dc2626">❌ 매입 없음</span>'; rowBg = 'background:rgba(220,38,38,0.04)'; }
+    else if (status === 'unmatched_purchase'){ statusBadge = '<span style="color:#6b7280">📦 미판매</span>';  rowBg = 'background:rgba(107,114,128,0.04)'; }
+
+    const editBtnBuy  = purchase ? `<button class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:11px" onclick="openTransactionModal(transactions.find(t=>t.id==='${purchase.txId}'))">수정</button>` : '';
+    const editBtnSell = sale     ? `<button class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:11px" onclick="openTransactionModal(transactions.find(t=>t.id==='${sale.txId}'))">수정</button>` : '';
+
+    const buyQtyStyle = !qtyMatch && purchase && sale ? 'color:#d97706;font-weight:700' : '';
+    const selQtyStyle = !qtyMatch && purchase && sale ? 'color:#d97706;font-weight:700' : '';
+
+    const buyCol = purchase
+      ? `<td style="font-size:11px;color:var(--gray-500)">${purchase.date}<br><span style="color:var(--gray-700)">${purchase.vendor}</span></td>
+         <td style="text-align:right;${buyQtyStyle}">${fmt(purchase.qty)}</td>
+         <td style="text-align:right">${fmt(purchase.unitPrice)}원</td>
+         <td style="text-align:right;color:#3b82f6">${fmt(purchase.total)}원 ${editBtnBuy}</td>`
+      : `<td colspan="4" style="text-align:center;color:var(--gray-300)">—</td>`;
+
+    const selCol = sale
+      ? `<td style="font-size:11px;color:var(--gray-500)">${sale.date}<br><span style="color:var(--gray-700)">${sale.vendor}</span></td>
+         <td style="text-align:right;${selQtyStyle}">${fmt(sale.qty)}</td>
+         <td style="text-align:right">${fmt(sale.unitPrice)}원</td>
+         <td style="text-align:right;color:#16a34a">${fmt(sale.total)}원 ${editBtnSell}</td>`
+      : `<td colspan="4" style="text-align:center;color:var(--gray-300)">—</td>`;
+
+    const marginCell = margin !== null
+      ? `<td style="text-align:right;font-weight:700;color:${margin >= 0 ? '#16a34a' : '#dc2626'}">${fmt(margin)}원</td>`
+      : `<td style="text-align:center;color:var(--gray-300)">—</td>`;
+
+    return `<tr style="${rowBg}">
+      <td><strong>${itemName}</strong></td>
+      ${buyCol}
+      ${selCol}
+      <td style="text-align:right;color:var(--gray-500)">${shipShare ? fmt(shipShare) + '원' : '-'}</td>
+      ${marginCell}
+      <td style="text-align:center;font-size:12px;white-space:nowrap">${statusBadge}</td>
     </tr>`;
-  }).join('') || `<tr><td colspan="7"><div class="empty-state"><div class="empty-icon">📊</div><p>해당 기간 거래 없음</p></div></td></tr>`;
+  }).join('') || `<tr><td colspan="13"><div class="empty-state"><div class="empty-icon">📊</div><p>해당 기간 거래 없음</p></div></td></tr>`;
 
-  const marginColor = grandMargin >= 0 ? 'color:#16a34a' : 'color:#dc2626';
-
+  const mc = totalMargin >= 0 ? '#16a34a' : '#dc2626';
   el.innerHTML = `
-    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
-      <div class="summary-section-title" style="margin:0">품목별 수익분석</div>
-      <div style="font-size:12px;color:var(--gray-400)">매입원가 vs 매출액 비교 · 운임비 등 기타 품목은 별도 행으로 표시</div>
-    </div>
-    <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap">
-      <div class="card" style="flex:1;min-width:140px;padding:14px 18px">
-        <div class="card-title">총 매입원가</div>
-        <div style="font-size:18px;font-weight:700;color:#3b82f6">${fmt(grandBuy)}원</div>
-      </div>
-      <div class="card" style="flex:1;min-width:140px;padding:14px 18px">
-        <div class="card-title">총 매출액</div>
-        <div style="font-size:18px;font-weight:700;color:#16a34a">${fmt(grandSell)}원</div>
-      </div>
-      <div class="card" style="flex:1;min-width:140px;padding:14px 18px">
-        <div class="card-title">총 마진</div>
-        <div style="font-size:18px;font-weight:700;${marginColor}">${fmt(Math.abs(grandMargin))}원${grandMargin < 0 ? ' (손실)' : ''}</div>
-      </div>
-      <div class="card" style="flex:1;min-width:140px;padding:14px 18px">
-        <div class="card-title">전체 원가율</div>
-        <div style="font-size:18px;font-weight:700">${grandSell ? Math.round(grandBuy/grandSell*100) + '%' : '-'}</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;flex-wrap:wrap;gap:8px">
+      <div class="summary-section-title" style="margin:0">품목별 매칭 수익분석</div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <label style="font-size:12px;color:var(--gray-500)">매칭 허용:</label>
+        <select class="form-control" style="width:90px;padding:4px 8px;font-size:12px" onchange="itemMatchWindow=Number(this.value);render('summary')">
+          <option value="3"  ${itemMatchWindow===3?'selected':''}>±3일</option>
+          <option value="7"  ${itemMatchWindow===7?'selected':''}>±7일</option>
+          <option value="14" ${itemMatchWindow===14?'selected':''}>±14일</option>
+          <option value="30" ${itemMatchWindow===30?'selected':''}>±30일</option>
+        </select>
       </div>
     </div>
-    <div class="table-wrapper">
-      <table>
-        <thead><tr>
-          <th>품목명</th>
-          <th style="text-align:right">매입수량</th>
-          <th style="text-align:right">매입금액 (원가)</th>
-          <th style="text-align:right">매출수량</th>
-          <th style="text-align:right">매출금액</th>
-          <th style="text-align:right">마진</th>
-          <th style="text-align:center">원가율</th>
-        </tr></thead>
+    <div style="display:flex;gap:10px;margin-bottom:16px;flex-wrap:wrap">
+      <div class="card" style="flex:1;min-width:110px;padding:12px 16px">
+        <div class="card-title">총 매입원가</div><div style="font-size:16px;font-weight:700;color:#3b82f6">${fmt(totalBuy)}원</div>
+      </div>
+      <div class="card" style="flex:1;min-width:110px;padding:12px 16px">
+        <div class="card-title">운임비 합계</div><div style="font-size:16px;font-weight:700;color:#f59e0b">${fmt(totalShip)}원</div>
+      </div>
+      <div class="card" style="flex:1;min-width:110px;padding:12px 16px">
+        <div class="card-title">총 매출액</div><div style="font-size:16px;font-weight:700;color:#16a34a">${fmt(totalSell)}원</div>
+      </div>
+      <div class="card" style="flex:1;min-width:110px;padding:12px 16px">
+        <div class="card-title">순 마진</div><div style="font-size:16px;font-weight:700;color:${mc}">${fmt(Math.abs(totalMargin))}원${totalMargin<0?' (손실)':''}</div>
+      </div>
+      <div class="card" style="flex:1;min-width:110px;padding:12px 16px">
+        <div class="card-title">원가율</div><div style="font-size:16px;font-weight:700">${totalSell ? Math.round(totalBuy/totalSell*100)+'%' : '-'}</div>
+      </div>
+    </div>
+    <div class="table-wrapper" style="overflow-x:auto">
+      <table style="min-width:920px">
+        <thead>
+          <tr>
+            <th rowspan="2" style="min-width:100px">품목</th>
+            <th colspan="4" style="text-align:center;background:#eff6ff;color:#3b82f6">📥 매입</th>
+            <th colspan="4" style="text-align:center;background:#f0fdf4;color:#16a34a">📤 매출</th>
+            <th rowspan="2" style="text-align:right;white-space:nowrap">운임배분</th>
+            <th rowspan="2" style="text-align:right">마진</th>
+            <th rowspan="2" style="text-align:center">상태</th>
+          </tr>
+          <tr>
+            <th style="background:#eff6ff;font-weight:400;font-size:11px">날짜 / 거래처</th>
+            <th style="background:#eff6ff;font-weight:400;font-size:11px;text-align:right">수량</th>
+            <th style="background:#eff6ff;font-weight:400;font-size:11px;text-align:right">단가</th>
+            <th style="background:#eff6ff;font-weight:400;font-size:11px;text-align:right">합계</th>
+            <th style="background:#f0fdf4;font-weight:400;font-size:11px">날짜 / 거래처</th>
+            <th style="background:#f0fdf4;font-weight:400;font-size:11px;text-align:right">수량</th>
+            <th style="background:#f0fdf4;font-weight:400;font-size:11px;text-align:right">단가</th>
+            <th style="background:#f0fdf4;font-weight:400;font-size:11px;text-align:right">합계</th>
+          </tr>
+        </thead>
         <tbody>${rows}</tbody>
-        <tfoot><tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">
-          <td>합 계</td>
-          <td></td>
-          <td style="text-align:right;color:#3b82f6">${fmt(grandBuy)}원</td>
-          <td></td>
-          <td style="text-align:right;color:#16a34a">${fmt(grandSell)}원</td>
-          <td style="text-align:right;${marginColor}">${fmt(Math.abs(grandMargin))}원</td>
-          <td style="text-align:center">${grandSell ? Math.round(grandBuy/grandSell*100) + '%' : '-'}</td>
-        </tr></tfoot>
       </table>
     </div>
     <div style="margin-top:10px;font-size:11px;color:var(--gray-400)">
-      💡 운임비·기타 경비는 별도 품목명으로 입력된 경우 아래 별도 행으로 표시됩니다. 마진 = 매출 - 매입(부가세 포함).
+      💡 운임·배송·택배·화물·퀵 포함 품목명은 자동 운임비 처리 → 같은 날 매출에 수량 비례 배분됩니다.<br>
+      ⚠️ 수량 불일치 / ❌ 매입 없음 행은 [수정] 버튼으로 거래를 바로 수정할 수 있습니다.
     </div>`;
 }
 
