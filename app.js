@@ -2413,8 +2413,8 @@ function openTransactionModal(prefill = null, editId = null) {
           <option value="">거래처 선택 (없으면 아래 직접입력)</option>${vOpts}
         </select>
       </div>
-      <div class="form-group" id="tx-payee-group" style="display:${payeeShow}"><label>지급처 직접입력 <span style="font-size:11px;color:var(--gray-400)">(거래처 미등록 시)</span></label>
-        <input id="tx-payee-name" class="form-control" placeholder="예: 홍길동 기사, 일용직, 국세청 등" value="${prefill?.payeeName||''}">
+      <div class="form-group" id="tx-payee-group" style="display:${payeeShow}"><label>거래처명 직접입력 <span style="font-size:11px;color:var(--gray-400)">(거래처 미등록 시)</span></label>
+        <input id="tx-payee-name" class="form-control" placeholder="예: 홍길동, 국세청, ○○마트 등" value="${prefill?.payeeName||''}">
       </div>
       <div class="form-group"><label>결제방법</label>
         <select id="tx-payment" class="form-control">
@@ -2853,7 +2853,7 @@ function downloadQuoteListExcel() {
     const v   = vendors.find(v => v.id === q.vendorId);
     const amt = q.items.reduce((s,i) => s+i.amount, 0);
     const tax = q.items.reduce((s,i) => s+i.tax, 0);
-    return [q.quoteNo, q.type, q.date, q.validUntil||'', v?v.companyName:'', q.status, amt, tax, amt+tax, q.memo||''];
+    return [q.quoteNo, q.type, q.date, q.validUntil||'', v?v.companyName:(q.vendorName||''), q.status, amt, tax, amt+tax, q.memo||''];
   });
   const ws = XLSX.utils.aoa_to_sheet([['■ 견적/발주 목록'],[],header,...rows]);
   ws['!cols'] = [14,6,10,10,20,6,12,10,12,20].map(w=>({wch:w}));
@@ -3029,7 +3029,7 @@ function renderQuotes(el) {
       <td><strong>${q.quoteNo}</strong></td>
       <td>${q.date}</td>
       <td>${q.validUntil || '-'}</td>
-      <td>${v ? v.companyName : '-'}</td>
+      <td>${v ? v.companyName : (q.vendorName ? `<span style="color:var(--gray-600)">${q.vendorName}</span>` : '-')}</td>
       <td style="text-align:right"><strong>${fmt(total)}원</strong></td>
       <td>${statusBadge}${txBadge}</td>
       <td><div class="td-actions">
@@ -3083,6 +3083,11 @@ function switchQuotesTab(tab) {
   render('quotes');
 }
 
+function onQVendorChange(sel) {
+  const grp = document.getElementById('q-payee-group');
+  if (grp) grp.style.display = sel.value ? 'none' : '';
+}
+
 function openQuoteModal(id = null, type = '견적서') {
   const q = id ? quotes.find(q => q.id === id) : null;
   txLineItems = q ? q.items.map(i => ({...i})) : [newLineItem()];
@@ -3110,9 +3115,13 @@ function openQuoteModal(id = null, type = '견적서') {
       </div>
       <div class="form-group">
         <label>거래처</label>
-        <select id="q-vendor" class="form-control">
-          <option value="">거래처 선택</option>${vOpts}
+        <select id="q-vendor" class="form-control" onchange="onQVendorChange(this)">
+          <option value="">거래처 선택 (없으면 아래 직접입력)</option>${vOpts}
         </select>
+      </div>
+      <div class="form-group" id="q-payee-group" style="display:${q&&q.vendorId?'none':''}">
+        <label>거래처명 직접입력 <span style="font-size:11px;color:var(--gray-400)">(미등록 시)</span></label>
+        <input id="q-payee-name" class="form-control" placeholder="예: ○○회사, 홍길동 등" value="${q&&!q.vendorId ? q.vendorName||'' : ''}">
       </div>
       <div class="form-group full">
         <label>메모 (특기사항, 납기일 등)</label>
@@ -3150,6 +3159,7 @@ function saveQuoteThen(id, type, openPDF) {
   const quoteNo    = document.getElementById('q-no').value;
   const validUntil = document.getElementById('q-valid').value;
   const vendorId   = document.getElementById('q-vendor').value;
+  const vendorName = vendorId ? '' : (document.getElementById('q-payee-name')?.value.trim() || '');
   const memo       = document.getElementById('q-memo').value.trim();
   if (!date) { alert('작성일을 입력하세요.'); return; }
 
@@ -3160,7 +3170,7 @@ function saveQuoteThen(id, type, openPDF) {
   const validItems = txLineItems.filter(l => l.itemName || l.amount > 0);
   if (!validItems.length) { alert('품목을 하나 이상 입력하세요.'); return; }
 
-  const data = { quoteNo, date, validUntil, vendorId, memo, type, items: validItems };
+  const data = { quoteNo, date, validUntil, vendorId, vendorName, memo, type, items: validItems };
 
   if (id) {
     const idx = quotes.findIndex(q => q.id === id);
@@ -3278,7 +3288,7 @@ td{border:1px solid #aaa;padding:4px;text-align:center}
 <div class="header-wrap">
   <div class="header-box">
     <div class="hbox-title">◼ ${isQuote ? '수신 (공급받는 자)' : '공급사 (매입처)'}</div>
-    <div class="hrow"><span class="hlabel">상호</span><span>${vendor ? vendor.companyName : ''}</span></div>
+    <div class="hrow"><span class="hlabel">상호</span><span>${vendor ? vendor.companyName : (q.vendorName||'')}</span></div>
     <div class="hrow"><span class="hlabel">대표자</span><span>${vendor ? vendor.representative||'' : ''}</span></div>
     <div class="hrow"><span class="hlabel">사업자번호</span><span>${vendor ? vendor.businessNumber||'' : ''}</span></div>
     <div class="hrow"><span class="hlabel">주소</span><span>${vendor ? vendor.address||'' : ''}</span></div>
