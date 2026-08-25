@@ -2086,7 +2086,8 @@ function deleteVendor(id) {
 let itemSearch = '';
 
 function itemRowsHtml() {
-  const filtered = items.filter(i => i.name.includes(itemSearch) || (i.code||'').includes(itemSearch) || (i.spec||'').includes(itemSearch));
+  const q2 = itemSearch.toLowerCase();
+  const filtered = items.filter(i => i.name.toLowerCase().includes(q2) || (i.code||'').toLowerCase().includes(q2) || (i.spec||'').toLowerCase().includes(q2));
   return filtered.map(i => {
     const pv = vendors.find(v => v.id === i.purchaseVendorId);
     const sv = vendors.find(v => v.id === i.salesVendorId);
@@ -3088,6 +3089,11 @@ function onQVendorChange(sel) {
   if (grp) grp.style.display = sel.value ? 'none' : '';
 }
 
+function toggleQIssuer(chk) {
+  const fields = document.getElementById('q-issuer-fields');
+  if (fields) fields.style.display = chk.checked ? '' : 'none';
+}
+
 function openQuoteModal(id = null, type = '견적서') {
   const q = id ? quotes.find(q => q.id === id) : null;
   txLineItems = q ? q.items.map(i => ({...i})) : [newLineItem()];
@@ -3129,6 +3135,22 @@ function openQuoteModal(id = null, type = '견적서') {
       </div>
     </div>
 
+    <div style="margin-bottom:10px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;font-weight:600;color:var(--gray-600)">
+        <input type="checkbox" id="q-custom-issuer-chk" ${q&&q.issuer?'checked':''} onchange="toggleQIssuer(this)">
+        발행처 직접입력 (내 사업자 대신 다른 사업자로 발행)
+      </label>
+      <div id="q-issuer-fields" style="display:${q&&q.issuer?'':'none'};margin-top:10px">
+        <div class="form-grid">
+          <div class="form-group"><label>상호</label><input id="q-i-name" class="form-control" placeholder="○○주식회사" value="${q&&q.issuer?q.issuer.name||'':''}"></div>
+          <div class="form-group"><label>대표자</label><input id="q-i-rep" class="form-control" placeholder="홍길동" value="${q&&q.issuer?q.issuer.representative||'':''}"></div>
+          <div class="form-group"><label>사업자번호</label><input id="q-i-biz" class="form-control" placeholder="000-00-00000" value="${q&&q.issuer?q.issuer.businessNumber||'':''}"></div>
+          <div class="form-group"><label>연락처</label><input id="q-i-tel" class="form-control" placeholder="02-0000-0000" value="${q&&q.issuer?q.issuer.tel||'':''}"></div>
+          <div class="form-group full"><label>주소</label><input id="q-i-addr" class="form-control" value="${q&&q.issuer?q.issuer.address||'':''}"></div>
+        </div>
+      </div>
+    </div>
+
     <div class="form-section-title">품목 내역</div>
     <div class="items-table-wrap">
       <table>
@@ -3161,6 +3183,14 @@ function saveQuoteThen(id, type, openPDF) {
   const vendorId   = document.getElementById('q-vendor').value;
   const vendorName = vendorId ? '' : (document.getElementById('q-payee-name')?.value.trim() || '');
   const memo       = document.getElementById('q-memo').value.trim();
+  const useIssuer  = document.getElementById('q-custom-issuer-chk')?.checked;
+  const issuer     = useIssuer ? {
+    name:           document.getElementById('q-i-name')?.value.trim() || '',
+    representative: document.getElementById('q-i-rep')?.value.trim()  || '',
+    businessNumber: document.getElementById('q-i-biz')?.value.trim()  || '',
+    tel:            document.getElementById('q-i-tel')?.value.trim()   || '',
+    address:        document.getElementById('q-i-addr')?.value.trim()  || '',
+  } : null;
   if (!date) { alert('작성일을 입력하세요.'); return; }
 
   txLineItems.forEach(line => {
@@ -3170,7 +3200,7 @@ function saveQuoteThen(id, type, openPDF) {
   const validItems = txLineItems.filter(l => l.itemName || l.amount > 0);
   if (!validItems.length) { alert('품목을 하나 이상 입력하세요.'); return; }
 
-  const data = { quoteNo, date, validUntil, vendorId, vendorName, memo, type, items: validItems };
+  const data = { quoteNo, date, validUntil, vendorId, vendorName, issuer, memo, type, items: validItems };
 
   if (id) {
     const idx = quotes.findIndex(q => q.id === id);
@@ -3295,11 +3325,11 @@ td{border:1px solid #aaa;padding:4px;text-align:center}
   </div>
   <div class="header-box">
     <div class="hbox-title">◼ ${isQuote ? '공급자 (발행)' : '발주자'}</div>
-    <div class="hrow"><span class="hlabel">상호</span><span>${ci.name||''}</span></div>
-    <div class="hrow"><span class="hlabel">대표자</span><span>${ci.representative||''}</span></div>
-    <div class="hrow"><span class="hlabel">사업자번호</span><span>${ci.businessNumber||''}</span></div>
-    <div class="hrow"><span class="hlabel">주소</span><span>${ci.address||''}</span></div>
-    <div class="hrow"><span class="hlabel">연락처</span><span>${ci.tel||''}</span></div>
+    <div class="hrow"><span class="hlabel">상호</span><span>${(q.issuer&&q.issuer.name)||ci.name||''}</span></div>
+    <div class="hrow"><span class="hlabel">대표자</span><span>${(q.issuer&&q.issuer.representative)||ci.representative||''}</span></div>
+    <div class="hrow"><span class="hlabel">사업자번호</span><span>${(q.issuer&&q.issuer.businessNumber)||ci.businessNumber||''}</span></div>
+    <div class="hrow"><span class="hlabel">주소</span><span>${(q.issuer&&q.issuer.address)||ci.address||''}</span></div>
+    <div class="hrow"><span class="hlabel">연락처</span><span>${(q.issuer&&q.issuer.tel)||ci.tel||''}</span></div>
   </div>
 </div>
 <table>
