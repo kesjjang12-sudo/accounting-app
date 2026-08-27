@@ -120,6 +120,14 @@ function doPost(e) {
       return updateCandidateStatus(payload.id, payload.status);
     }
 
+    // 입금 매칭 API
+    if (payload.action === 'getDepositCandidates') {
+      return respond({ success: true, deposits: getDeposits() });
+    }
+    if (payload.action === 'updateDepositStatus') {
+      return updateDepositStatus(payload.id, payload.status);
+    }
+
     return respond({ success: false, message: '알 수 없는 action: ' + payload.action });
 
   } catch (err) {
@@ -344,6 +352,81 @@ function logAiOffice(employee, system, messages, response, usage) {
 // ══════════════════════════════════════════════════════════
 
 const CANDIDATE_HEADERS = ['id','date','merchant','amount','cardType','status','suggestedCategory','receivedAt','body'];
+const DEPOSIT_HEADERS   = ['id','date','depositor','amount','bank','status','receivedAt','body'];
+const BANK_KW = /농협|국민|KB|신한|우리|하나|기업|IBK|카카오뱅크|토스뱅크|새마을|신협|씨티|부산|대구|경남|광주|전북|제주|우체국/;
+
+// 입금 문자 판별 — 은행명 + '입금', 출금·카드승인 문자는 제외
+function isDepositSms(body) {
+  if (!/입금/.test(body)) return false;
+  if (/출금|결제|승인|취소|이체수수료/.test(body)) return false;
+  return BANK_KW.test(body);
+}
+
+function handleDeposit(body, receivedAt) {
+  const parsed = parseDepositBody(body, receivedAt);
+  const id     = [parsed.date, parsed.depositor, parsed.amount].join('|');
+  const sheet  = getOrCreateSheet('deposit_candidates', DEPOSIT_HEADERS);
+  const rows   = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === id) return respond({ success: true, status: 'duplicate' });
+  }
+  sheet.appendRow([id, parsed.date, parsed.depositor, parsed.amount, parsed.bank, 'pending', receivedAt, body]);
+  const r = sheet.getLastRow();
+  sheet.getRange(r, 2).setNumberFormat('@').setValue(String(parsed.date));
+  return respond({ success: true, status: 'deposit_pending' });
+}
+
+function parseDepositBody(body, receivedAt) {
+  let date = '';
+  if (isValidDate(receivedAt)) {
+    date = Utilities.formatDate(new Date(receivedAt), 'Asia/Seoul', 'yyyy-MM-dd HH:mm');
+  }
+  // 잔액은 금액 추출에서 제외
+  const cleaned  = String(body).replace(/잔액\s*[\d,]+\s*원?/g, '').replace(/누적\s*[\d,]+원/g, '');
+  const amtMatch = cleaned.match(/입금\s*([\d,]+)/) || cleaned.match(/([\d,]+)\s*원/);
+  const amount   = amtMatch ? parseInt(amtMatch[1].replace(/,/g, ''), 10) : 0;
+  const bankMatch = String(body).match(BANK_KW);
+  return {
+    date: date, amount: amount,
+    bank: bankMatch ? bankMatch[0] : '',
+    depositor: extractDepositor(body)
+  };
+}
+
+// 입금자명: "입금 500,000 홍길동" 또는 "홍길동님 입금" 형태
+function extractDepositor(body) {
+  const cleaned = String(body).replace(/잔액\s*[\d,]+\s*원?/g, '');
+  let m = cleaned.match(/입금\s*[\d,]+\s*원?\s*([^\s\n\d]{2,20})/);
+  if (m) return m[1].trim();
+  m = cleaned.match(/([^\s\n\d]{2,20})\s*님?\s*입금/);
+  if (m) return m[1].trim();
+  return '';
+}
+
+function getDeposits() {
+  const sheet = getOrCreateSheet('deposit_candidates', DEPOSIT_HEADERS);
+  const rows  = sheet.getDataRange().getValues();
+  if (rows.length <= 1) return [];
+  const headers = rows[0];
+  return rows.slice(1).map(function (r) {
+    const obj = {};
+    headers.forEach(function (h, i) { obj[h] = r[i]; });
+    obj.amount = Number(obj.amount) || 0;
+    return obj;
+  });
+}
+
+function updateDepositStatus(id, status) {
+  const sheet = getOrCreateSheet('deposit_candidates', DEPOSIT_HEADERS);
+  const rows  = sheet.getDataRange().getValues();
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i][0] === id) {
+      sheet.getRange(i + 1, 6).setValue(status);
+      return respond({ success: true });
+    }
+  }
+  return respond({ success: false, message: 'not found' });
+}
 
 function handleSms(payload) {
   const body       = payload.body || '';
@@ -356,6 +439,12 @@ function handleSms(payload) {
   const raw = getOrCreateSheet('sms_raw', ['receivedAt','body']);
   raw.appendRow([receivedAt, body]);
   Logger.log('sms_raw 시트에 기록 완료 (스프레드시트: ' + SpreadsheetApp.getActiveSpreadsheet().getName() + ')');
+
+  // 은행 입금 문자 → 미수금 매칭 후보로 분기
+  if (isDepositSms(body)) {
+    Logger.log('입금 문자로 판별 → deposit_candidates');
+    return handleDeposit(body, receivedAt);
+  }
 
   // 카드사 판별 (라스베가스·롯데 = 롯데카드 별칭 → 롯데카드로 정규화)
   const cardMatch = body.match(/라스베가스|롯데카드|롯데|현대카드/);

@@ -2607,6 +2607,44 @@ function onTxTypeChange(type) {
   if (changed) renderLineItems();
 }
 
+// 저장 전 실수 검증 — 중복거래 / 단가 이상치 / 빈값 / 미래날짜
+function validateTx(date, type, vendorId, payeeName, validItems, editId) {
+  const warns = [];
+  const total = validItems.reduce((s, i) => s + i.amount + i.tax, 0);
+
+  if (date > today()) warns.push(`날짜가 미래입니다 (${date}). 오타가 아닌지 확인하세요.`);
+
+  const dup = transactions.find(t =>
+    t.id !== editId && t.date === date && t.type === type &&
+    (t.vendorId || '') === (vendorId || '') && (t.payeeName || '') === (payeeName || '') &&
+    t.items.reduce((s, i) => s + i.amount + i.tax, 0) === total
+  );
+  if (dup) {
+    const vn = vendors.find(v => v.id === vendorId)?.companyName || payeeName || '거래처 없음';
+    warns.push(`똑같은 거래가 이미 있습니다 — ${date} · ${vn} · ${fmt(total)}원 (중복 입력?)`);
+  }
+
+  validItems.forEach(line => {
+    if (!line.itemName) { warns.push('품목명이 비어 있는 줄이 있습니다.'); return; }
+    if (!line.quantity)  warns.push(`"${line.itemName}" 수량이 0입니다.`);
+    if (!line.unitPrice) warns.push(`"${line.itemName}" 단가가 0입니다.`);
+
+    const hist = [];
+    transactions.forEach(t => {
+      if (t.id === editId || t.type !== type) return;
+      t.items.forEach(i => { if (i.itemName === line.itemName && i.unitPrice > 0) hist.push(i.unitPrice); });
+    });
+    if (hist.length >= 2 && line.unitPrice > 0) {
+      const avg  = hist.reduce((s, p) => s + p, 0) / hist.length;
+      const diff = Math.round((line.unitPrice - avg) / avg * 100);
+      if (Math.abs(diff) >= 30)
+        warns.push(`"${line.itemName}" 단가 ${fmt(line.unitPrice)}원 — 평소 평균 ${fmt(Math.round(avg))}원 대비 ${diff > 0 ? '+' : ''}${diff}%`);
+    }
+  });
+
+  return warns;
+}
+
 function saveTx(cont) {
   const date    = document.getElementById('tx-date').value;
   if (!date) { alert('날짜를 입력하세요.'); return; }
@@ -2627,6 +2665,9 @@ function saveTx(cont) {
   });
   const validItems = txLineItems.filter(l => l.itemName || l.amount > 0);
   if (!validItems.length) { alert('품목을 하나 이상 입력하세요.'); return; }
+
+  const warns = validateTx(date, type, vendorId, payeeName, validItems, editId);
+  if (warns.length && !confirm('⚠️ 확인이 필요합니다\n\n' + warns.map(w => '• ' + w).join('\n') + '\n\n그래도 저장할까요?')) return;
 
   if (editId) {
     const idx = transactions.findIndex(t => t.id === editId);
@@ -4353,14 +4394,164 @@ async function fetchCandidatesFromGas(silent = false) {
   return null;
 }
 
+// ── 입금 매칭 ──────────────────────────────────────────────
+function loadDeposits()      { return DBshared.load('acc_deposits', '[]'); }
+function saveDeposits(list)  { DBshared.save('acc_deposits', list); }
+let _depositsCache = null;
+
+async function fetchDepositsFromGas(silent = false) {
+  if (!APPS_SCRIPT_URL) { if (!silent) alert('⚙ 시트 URL이 설정되지 않았습니다.'); return null; }
+  try {
+    const res  = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'getDepositCandidates' })
+    });
+    const json = await res.json();
+    if (json.deposits) {
+      const existing    = loadDeposits();
+      const existingIds = new Set(existing.map(d => d.id));
+      const merged      = [...existing];
+      json.deposits.forEach(d => { if (!existingIds.has(d.id)) merged.push(d); });
+      saveDeposits(merged);
+      _depositsCache = merged;
+      return merged;
+    }
+  } catch (err) {
+    if (!silent) alert('GAS 연결 오류: ' + err.message);
+  }
+  return null;
+}
+
+// 입금건 → 미수 매출 후보 찾기 (금액 일치 우선, 입금자명 유사 가산)
+function findUnpaidMatches(dep) {
+  const amt = Number(dep.amount) || 0;
+  if (!amt) return [];
+  const name = (dep.depositor || '').replace(/\s/g, '');
+  return transactions
+    .filter(t => t.type === '매출' && !t.isPaid &&
+                 t.items.reduce((s, i) => s + i.amount + i.tax, 0) === amt)
+    .map(t => {
+      const v  = vendors.find(v => v.id === t.vendorId);
+      const vn = (v ? v.companyName : t.payeeName || '').replace(/\s/g, '');
+      const nameHit = name && vn && (vn.includes(name) || name.includes(vn));
+      return { tx: t, vendorName: v ? v.companyName : (t.payeeName || '거래처 없음'), nameHit };
+    })
+    .sort((a, b) => (b.nameHit ? 1 : 0) - (a.nameHit ? 1 : 0) || b.tx.date.localeCompare(a.tx.date));
+}
+
+function setDepositStatus(id, status) {
+  const list = (_depositsCache || loadDeposits()).map(d => d.id === id ? { ...d, status } : d);
+  _depositsCache = list;
+  saveDeposits(list);
+  renderCandidatesPage(document.getElementById('page-candidates'));
+}
+
+// 입금건을 특정 미수 매출에 매칭 → 결제완료 처리
+function applyDepositMatch(depId, txId) {
+  const dep = (_depositsCache || loadDeposits()).find(d => d.id === depId);
+  const idx = transactions.findIndex(t => t.id === txId);
+  if (!dep || idx === -1) return;
+  const v  = vendors.find(v => v.id === transactions[idx].vendorId);
+  const vn = v ? v.companyName : (transactions[idx].payeeName || '거래처 없음');
+  const amt = transactions[idx].items.reduce((s, i) => s + i.amount + i.tax, 0);
+  if (!confirm(`${vn} · ${fmt(amt)}원 거래를 결제완료로 처리할까요?\n(입금일: ${String(dep.date).slice(0,10)})`)) return;
+  transactions[idx].isPaid     = true;
+  transactions[idx].paidAt     = String(dep.date).slice(0, 10) || today();
+  transactions[idx].paidMethod = '계좌이체';
+  saveTransactions();
+  setDepositStatus(depId, 'matched');
+}
+
+async function syncDepositsUI() {
+  const btn = document.getElementById('dep-sync-btn');
+  if (btn) { btn.disabled = true; btn.textContent = '동기화 중...'; }
+  await fetchDepositsFromGas();
+  if (btn) { btn.disabled = false; btn.textContent = '↻ GAS 동기화'; }
+  renderCandidatesPage(document.getElementById('page-candidates'));
+}
+
+function renderDepositTab(el, tabsHtml) {
+  _depositsCache = _depositsCache || loadDeposits();
+  const pending = _depositsCache.filter(d => d.status === 'pending');
+  const done    = _depositsCache.filter(d => d.status !== 'pending');
+  const unpaidTotal = transactions
+    .filter(t => t.type === '매출' && !t.isPaid)
+    .reduce((s, t) => s + t.items.reduce((a, i) => a + i.amount + i.tax, 0), 0);
+
+  const rows = pending.length === 0
+    ? `<tr><td colspan="5"><div class="empty-state"><div class="empty-icon">💰</div><p>대기 중인 입금 문자가 없습니다</p></div></td></tr>`
+    : pending.map(d => {
+        const matches = findUnpaidMatches(d);
+        let matchCell;
+        if (!matches.length) {
+          matchCell = `<span style="color:var(--gray-500);font-size:12px">금액이 맞는 미수 매출 없음</span>`;
+        } else {
+          matchCell = matches.slice(0, 4).map(m => `
+            <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px">
+              ${m.nameHit ? '<span class="badge" style="background:#f0fdf4;color:#16a34a">이름 일치</span>' : ''}
+              <span style="font-size:12px">${m.tx.date} · ${m.vendorName}</span>
+              <button class="btn btn-success btn-sm" style="padding:2px 8px" onclick="applyDepositMatch('${d.id}','${m.tx.id}')">이 거래로 결제완료</button>
+            </div>`).join('');
+        }
+        return `<tr>
+          <td style="text-align:center;font-size:12px">${candDateText(d.date)}</td>
+          <td>${d.depositor || '-'}${d.bank ? `<br><span style="font-size:11px;color:var(--gray-500)">${d.bank}</span>` : ''}</td>
+          <td style="text-align:right"><strong>${fmt(Number(d.amount)||0)}원</strong></td>
+          <td>${matchCell}</td>
+          <td><div class="td-actions">
+            <button class="btn btn-ghost btn-sm" onclick="setDepositStatus('${d.id}','ignored')">무시</button>
+          </div></td>
+        </tr>`;
+      }).join('');
+
+  el.innerHTML = `
+    <div class="page-header">
+      <div>
+        <div class="page-title">📱 사업비 후보</div>
+        <div class="page-subtitle">은행 입금 문자 → 금액이 맞는 미수 매출을 찾아 결제완료 처리합니다</div>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-primary" id="dep-sync-btn" onclick="syncDepositsUI()">↻ GAS 동기화</button>
+      </div>
+    </div>
+    ${tabsHtml}
+    <div style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+      <div class="card" style="flex:1;min-width:150px">
+        <div class="card-title">미매칭 입금</div>
+        <div style="font-size:18px;font-weight:700;color:var(--primary)">${pending.length}건</div>
+      </div>
+      <div class="card" style="flex:1;min-width:150px">
+        <div class="card-title">처리됨</div>
+        <div style="font-size:18px;font-weight:700;color:#16a34a">${done.length}건</div>
+      </div>
+      <div class="card" style="flex:1;min-width:150px">
+        <div class="card-title">전체 미수금</div>
+        <div style="font-size:18px;font-weight:700;color:#d97706">${fmt(unpaidTotal)}원</div>
+      </div>
+    </div>
+    <div class="table-wrapper"><table>
+      <thead><tr>
+        <th style="text-align:center;width:150px">입금일</th><th style="width:140px">입금자</th>
+        <th style="text-align:right;width:110px">금액</th><th>매칭 후보 (미수 매출)</th>
+        <th class="no-sort" style="width:70px">관리</th>
+      </tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div style="margin-top:10px;font-size:11px;color:var(--gray-400)">
+      💡 입금 문자는 MacroDroid가 GAS로 보낸 뒤 여기서 금액이 일치하는 미수 매출과 대조됩니다. 입금자명이 거래처명과 겹치면 "이름 일치" 배지가 붙습니다.
+    </div>`;
+}
+
 // 사업비 후보 페이지 자동 동기화 (입장 시 1회 + 1분마다)
 let _candAutoTimer = null;
 async function _candAutoSync() {
   if (currentPage !== 'candidates' || !APPS_SCRIPT_URL) return;
-  const before = (_candidatesCache || loadCandidates()).length;
-  const merged = await fetchCandidatesFromGas(true);
+  const before    = (_candidatesCache || loadCandidates()).length;
+  const befDep    = (_depositsCache   || loadDeposits()).length;
+  const merged    = await fetchCandidatesFromGas(true);
+  const mergedDep = await fetchDepositsFromGas(true);
   if (currentPage !== 'candidates') return;
-  if (merged && merged.length !== before) {
+  if ((merged && merged.length !== before) || (mergedDep && mergedDep.length !== befDep)) {
     const el = document.getElementById('page-candidates');
     if (el) renderCandidatesPage(el);
   }
@@ -4552,6 +4743,11 @@ function exportExpensesExcel() {
 }
 
 function renderCandidatesPage(el) {
+  const tab = el._tab || 'card';
+  const _t  = (k, label) => `<button class="period-btn ${tab===k?'active':''}" onclick="this.closest('.page')._tab='${k}';renderCandidatesPage(this.closest('.page'))">${label}</button>`;
+  const tabsHtml = `<div style="display:flex;gap:4px;margin-bottom:16px">${_t('card','💳 카드 경비')}${_t('deposit','💰 입금 매칭')}</div>`;
+  if (tab === 'deposit') { renderDepositTab(el, tabsHtml); return; }
+
   _candidatesCache = loadCandidates();
   const filter = el._filter || 'pending';
   const month  = el._month  || 'all';   // 'all' | 'YYYY-MM'
@@ -4639,6 +4835,7 @@ function renderCandidatesPage(el) {
         <button class="btn btn-primary" id="cand-sync-btn" onclick="syncCandidatesUI()">↻ GAS 동기화</button>
       </div>
     </div>
+    ${tabsHtml}
     <div class="card" style="margin-bottom:14px;display:flex;align-items:center;justify-content:space-between">
       <div class="card-title" style="margin:0">반영된 사업비 합계 ${month==='all'?'(전체)':'('+month+')'}</div>
       <div style="font-size:18px;font-weight:700;color:var(--primary)">${confirmedTotal.toLocaleString('ko-KR')}원</div>
