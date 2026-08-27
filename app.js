@@ -2277,6 +2277,10 @@ function renderTransactions(el) {
           <input type="file" accept=".xlsx,.xls" style="display:none" onchange="uploadTransactionsExcel(this)">
         </label>
         <button class="btn btn-ghost" onclick="downloadTransactionsExcel()">📊 엑셀 다운로드</button>
+        <label class="btn btn-ghost" style="cursor:pointer">
+          📷 사진 입력
+          <input type="file" accept="image/*" style="display:none" onchange="handlePhotoTx(this)">
+        </label>
         <button class="btn btn-ghost" onclick="openTaxPaymentModal()">💸 세금납부</button>
         <button class="btn btn-primary" onclick="openTransactionModal()">+ 거래 입력</button>
       </div>
@@ -2374,6 +2378,108 @@ function deleteTransaction(id) {
   if (!confirm(`${t.date} ${t.type} (${v?v.companyName:''}) 거래를 삭제하시겠습니까?`)) return;
   transactions = transactions.filter(t => t.id !== id);
   saveTransactions(); render(currentPage);
+}
+
+// ── 사진으로 거래 입력 (Claude Vision, 이미지는 미보관) ────
+function _photoToB64(file, maxDim, quality) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      const scale = Math.min(1, maxDim / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = h;
+      cv.getContext('2d').drawImage(img, 0, 0, w, h);
+      URL.revokeObjectURL(url);
+      resolve(cv.toDataURL('image/jpeg', quality).split(',')[1]);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('이미지를 읽을 수 없습니다')); };
+    img.src = url;
+  });
+}
+
+async function handlePhotoTx(input) {
+  const file = input.files[0];
+  input.value = '';
+  if (!file) return;
+  if (!APPS_SCRIPT_URL || !SHEETS_SECRET) { alert('⚙ 구글 시트 연동(GAS)이 설정돼야 사용할 수 있습니다.'); return; }
+
+  openModal('📷 사진 분석 중', `<div class="empty-state" style="padding:30px"><div class="empty-icon">🔍</div><p>명세서를 읽는 중입니다... 몇 초 걸립니다</p></div>`);
+
+  let b64;
+  try { b64 = await _photoToB64(file, 1568, 0.85); }
+  catch (e) { closeModal(); alert(e.message); return; }
+
+  const myName = (companyInfo.name || '').trim();
+  const ask = `이 사진(거래명세서/영수증/계산서)에서 거래 정보를 추출해 아래 JSON 형식으로만 답해라. 설명·마크다운 금지.
+{"date":"YYYY-MM-DD","type":"매출|매입","vendorName":"상대 거래처명","items":[{"itemName":"","unit":"","quantity":0,"unitPrice":0,"tax":null}],"memo":""}
+- 내 회사는 "${myName || '(미설정)'}"다. 내 회사가 공급자면 "매출", 공급받는자면 "매입". 판단 어려우면 "매입".
+- vendorName은 내 회사가 아닌 상대방 상호.
+- 수량·단가 구분이 없으면 quantity 1, unitPrice에 금액.
+- 세액이 표기돼 있으면 tax에 숫자, 없으면 null.
+- 날짜를 못 읽으면 date는 "".`;
+
+  let json;
+  try {
+    const res = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({
+      secretKey: SHEETS_SECRET, action: 'askClaude', employee: '사진입력', maxTokens: 2000,
+      system: '너는 장부 앱의 문서 인식 도우미다. 반드시 유효한 JSON만 출력한다.',
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: b64 } },
+        { type: 'text', text: ask }
+      ]}]
+    })});
+    json = await res.json();
+  } catch (e) { closeModal(); alert('GAS 연결 오류: ' + e.message); return; }
+  b64 = null;   // 이미지는 여기서 폐기 — 어디에도 저장되지 않음
+
+  if (!json || !json.success) { closeModal(); alert('분석 실패: ' + (json?.message || '응답 없음')); return; }
+
+  let parsed;
+  try { parsed = JSON.parse(String(json.text).replace(/```json|```/g, '').trim()); }
+  catch { closeModal(); alert('사진에서 거래 정보를 읽지 못했습니다. 더 선명하게 다시 찍어보세요.'); return; }
+
+  const date     = /^\d{4}-\d{2}-\d{2}$/.test(parsed.date || '') ? parsed.date : today();
+  const type     = parsed.type === '매출' ? '매출' : '매입';
+  const rawItems = (parsed.items || []).filter(i => i && (i.itemName || i.unitPrice));
+  if (!rawItems.length) { closeModal(); alert('품목을 읽지 못했습니다. 더 선명하게 다시 찍어보세요.'); return; }
+
+  // 품목명 → 기존 이름과 유사하면 그 이름으로 통일 (오타·표기 차이 흡수)
+  const known = [...items.map(i => i.name), ...pastItemNames().map(p => p.name)];
+  const lineItems = rawItems.map(ri => {
+    const best   = known.map(n => ({ n, s: simRatio(ri.itemName, n) })).sort((a, b) => b.s - a.s)[0];
+    const name   = best && best.s >= 0.85 ? best.n : (ri.itemName || '').trim();
+    const master = items.find(i => normItem(i.name) === normItem(name));
+    const qty    = Number(ri.quantity) || 1;
+    const price  = Number(ri.unitPrice) || 0;
+    const taxExempt = master ? !!master.taxExempt : false;
+    const amount = qty * price;
+    const tax    = (ri.tax != null && ri.tax !== '') ? (Number(ri.tax) || 0) : (taxExempt ? 0 : Math.round(amount * 0.1));
+    return { _id: uid(), itemId: master ? master.id : '', itemName: name,
+      unit: ri.unit || (master && master.unit) || '', quantity: qty, unitPrice: price,
+      amount, tax, taxExempt, notes: '' };
+  });
+
+  // 거래처 유사도 매칭
+  const vBest = vendors.map(v => ({ v, s: simRatio(parsed.vendorName, v.companyName) })).sort((a, b) => b.s - a.s)[0];
+  const vendorId  = vBest && vBest.s >= 0.6 ? vBest.v.id : '';
+  const payeeName = vendorId ? '' : (parsed.vendorName || '').trim();
+
+  // 중복이면 등록하지 않음 — 같은 날짜·구분·합계·상대
+  const total = lineItems.reduce((s, i) => s + i.amount + i.tax, 0);
+  const dup = transactions.find(t => t.date === date && t.type === type &&
+    t.items.reduce((s, i) => s + i.amount + i.tax, 0) === total &&
+    (vendorId ? t.vendorId === vendorId : (!payeeName || simRatio(t.payeeName || '', payeeName) >= 0.6)));
+  if (dup) {
+    closeModal();
+    alert(`⛔ 이미 같은 거래가 있습니다.\n${date} · ${fmt(total)}원 — 등록하지 않았습니다.`);
+    return;
+  }
+
+  closeModal();
+  openTransactionModal({ date, type, accountCategory: type === '매입' ? '매입(상품)' : '매출',
+    vendorId, payeeName, paymentMethod: '계좌이체', isPaid: false, items: lineItems });
 }
 
 // ── TRANSACTION INPUT MODAL ───────────────────────────────

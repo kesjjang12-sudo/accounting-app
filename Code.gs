@@ -342,8 +342,12 @@ function logAiOffice(employee, system, messages, response, usage) {
       sheet.setFrozenRows(1);
     }
     const lastMsg = messages.length ? messages[messages.length - 1].content : '';
+    // 이미지 블록은 로그에 남기지 않는다 (base64 폐기) — 텍스트만 기록
+    const msgText = Array.isArray(lastMsg)
+      ? lastMsg.filter(function (c) { return c && c.type === 'text'; }).map(function (c) { return c.text; }).join('\n')
+      : String(lastMsg);
     const tok = usage ? ((usage.input_tokens || 0) + (usage.output_tokens || 0)) : '';
-    sheet.appendRow([new Date().toISOString(), employee, String(lastMsg).slice(0, 5000), String(response).slice(0, 5000), tok]);
+    sheet.appendRow([new Date().toISOString(), employee, msgText.slice(0, 5000), String(response).slice(0, 5000), tok]);
   } catch (e) {}
 }
 
