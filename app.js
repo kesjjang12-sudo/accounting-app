@@ -3053,41 +3053,46 @@ function downloadStatementFormExcel() {
     const sup = isPurchase ? partner : me;
     const rcv = isPurchase ? me : partner;
 
-    const rows = [];
-    rows.push(['거  래  명  세  서']);
-    rows.push([]);
-    rows.push(['발행일', today(), '', '', '', '', '거래기간', txs.length ? `${txs[0].date} ~ ${txs[txs.length-1].date}` : '', '', '', '']);
-    rows.push([]);
-    rows.push(['【 공급받는자 】', '', '', '', '', '', '【 공급자 】', '', '', '', '']);
-    rows.push(['상호',       rcv.name,           '', '', '(인)', '', '상호',       sup.name,           '', '', '(인)']);
-    rows.push(['사업자번호', rcv.businessNumber, '', '', '',     '', '사업자번호', sup.businessNumber, '', '', '']);
-    rows.push(['대표자',     rcv.representative, '', '', '',     '', '대표자',     sup.representative, '', '', '']);
-    rows.push(['주소',       rcv.address,        '', '', '',     '', '주소',       sup.address,        '', '', '']);
-    rows.push(['연락처',     rcv.tel,            '', '', '',     '', '연락처',     sup.tel,            '', '', '']);
-    rows.push([]);
-    rows.push(['번호', '날짜', '품목명', '규격', '단위', '수량', '단가', '공급가액', '세액', '합계금액', '비고']);
-
-    let n = 0, gAmt = 0, gTax = 0;
+    // 품목 줄 데이터 (년/월/일 분리)
+    const lineRows = [];
+    let gAmt = 0, gTax = 0;
     txs.forEach(t => {
       t.items.forEach(i => {
-        n++;
         gAmt += i.amount; gTax += i.tax;
         const master = items.find(m => m.id === i.itemId);
-        rows.push([n, t.date, i.itemName, (master && master.spec) || '', i.unit || '', i.quantity, i.unitPrice, i.amount, i.tax, i.amount + i.tax, i.notes || '']);
+        lineRows.push([t.date.slice(0,4), t.date.slice(5,7), t.date.slice(8,10),
+          i.itemName, (master && master.spec) || '', i.quantity, i.unitPrice, i.amount, i.tax]);
       });
     });
-    // 빈 양식이거나 줄이 적으면 손으로 쓸 수 있게 빈 줄 채움
-    for (let k = n; k < Math.max(n + 3, 15); k++) rows.push([k + 1, '', '', '', '', '', '', '', '', '', '']);
+    const targetRows = Math.max(lineRows.length + 3, 15);
+    while (lineRows.length < targetRows) lineRows.push(['','','','','','','','','']);
+    const total = gAmt + gTax;
 
-    rows.push(['합  계', '', '', '', '', '', '', gAmt || '', gTax || '', (gAmt + gTax) || '', '']);
+    // 표준 양식 1부 (공급받는자 보관용 / 공급자 보관용)
+    const rows   = [];
+    const merges = [];
+    const pushCopy = keeper => {
+      const r0 = rows.length;
+      rows.push([`거  래  명  세  서  (${keeper} 보관용)`]);
+      merges.push({ s: { r: r0, c: 0 }, e: { r: r0, c: 8 } });
+      rows.push(['공급받는자', '상호(법인명)',      rcv.name,           '', '공급자', '등록번호',     sup.businessNumber, '', '']);
+      rows.push(['',           '사업장주소',        rcv.address,        '', '',       '상호(법인명)', sup.name,           '성명', (sup.representative || '') + '  (인)']);
+      rows.push(['',           '전화번호',          rcv.tel,            '', '',       '사업장주소',   sup.address,        '', '']);
+      rows.push(['',           '합계금액(VAT포함)', total || '',        '', '',       '전화',         sup.tel,            '팩스', '']);
+      rows.push(['년', '월', '일', '품          목', '규 격', '수량', '단가', '공급가액', '세액']);
+      lineRows.forEach(lr => rows.push([...lr]));
+      rows.push(['합  계', '', '', '', '', '', '', gAmt || '', gTax || '']);
+      rows.push(['인수자', '', '(인)', '납품자', '', '(인)', '미수금', '', '']);
+    };
+
+    pushCopy('공급받는자');
     rows.push([]);
-    rows.push(['위와 같이 거래(납품)하였음을 확인합니다.']);
     rows.push([]);
-    rows.push(['', '인수자 확인 :', '', '(서명/인)', '', '', '인계자 확인 :', '', '(서명/인)', '', '']);
+    pushCopy('공급자');
 
     const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = [{wch:5},{wch:11},{wch:20},{wch:10},{wch:6},{wch:7},{wch:10},{wch:12},{wch:10},{wch:12},{wch:12}];
-    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 10 } }];
+    ws['!cols'] = [{wch:6},{wch:12},{wch:16},{wch:12},{wch:8},{wch:12},{wch:11},{wch:12},{wch:11}];
+    ws['!merges'] = merges;
 
     let sheetName = (partner.name || '양식').replace(/[\\\/\?\*\[\]:]/g, '').slice(0, 25) || '양식';
     let base = sheetName, i2 = 2;
