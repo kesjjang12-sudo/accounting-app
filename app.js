@@ -2277,6 +2277,7 @@ function renderTransactions(el) {
           <input type="file" accept=".xlsx,.xls" style="display:none" onchange="uploadTransactionsExcel(this)">
         </label>
         <button class="btn btn-ghost" onclick="downloadTransactionsExcel()">📊 엑셀 다운로드</button>
+        <button class="btn btn-ghost" onclick="downloadStatementFormExcel()" title="체크박스로 거래 선택 시 그 내용이 채워지고, 선택 없으면 빈 양식">📄 명세서 양식</button>
         <label class="btn btn-ghost" style="cursor:pointer">
           📷 사진 입력
           <input type="file" accept="image/*" style="display:none" onchange="handlePhotoTx(this)">
@@ -3015,6 +3016,87 @@ function xlsxCheck() {
 
 function xlsxSave(wb, name) {
   XLSX.writeFile(wb, name + '_' + today().replace(/-/g,'') + '.xlsx');
+}
+
+// ── 거래명세서 양식 (공급자/공급받는자 + 서명칸) ──────────
+// 체크박스로 거래 선택 시 그 내용으로 채워지고, 선택 없으면 빈 양식
+function downloadStatementFormExcel() {
+  if (!xlsxCheck()) return;
+  const ci  = companyInfo;
+  const ids = [..._sel.txRows];
+  const sel = ids.map(id => transactions.find(t => t.id === id)).filter(Boolean)
+                 .sort((a, b) => a.date.localeCompare(b.date));
+
+  // 상대별 그룹 (선택 없으면 빈 양식 1장)
+  const groups = {};
+  if (sel.length) {
+    sel.forEach(t => {
+      const key = t.vendorId || t.payeeName || '_blank';
+      (groups[key] = groups[key] || []).push(t);
+    });
+  } else {
+    groups['_blank'] = [];
+  }
+
+  const wb   = XLSX.utils.book_new();
+  const used = new Set();
+
+  Object.entries(groups).forEach(([key, txs]) => {
+    const v = vendors.find(v => v.id === key);
+    const partner = v
+      ? { name: v.companyName, businessNumber: v.businessNumber || '', representative: v.representative || '', address: v.address || '', tel: v.email || '' }
+      : { name: key === '_blank' ? '' : key, businessNumber: '', representative: '', address: '', tel: '' };
+
+    // 매입 거래만 모였으면 상대가 공급자, 아니면 내가 공급자
+    const isPurchase = txs.length > 0 && txs.every(t => t.type === '매입');
+    const me  = { name: ci.name || '', businessNumber: ci.businessNumber || '', representative: ci.representative || '', address: ci.address || '', tel: ci.tel || '' };
+    const sup = isPurchase ? partner : me;
+    const rcv = isPurchase ? me : partner;
+
+    const rows = [];
+    rows.push(['거  래  명  세  서']);
+    rows.push([]);
+    rows.push(['발행일', today(), '', '', '', '', '거래기간', txs.length ? `${txs[0].date} ~ ${txs[txs.length-1].date}` : '', '', '', '']);
+    rows.push([]);
+    rows.push(['【 공급받는자 】', '', '', '', '', '', '【 공급자 】', '', '', '', '']);
+    rows.push(['상호',       rcv.name,           '', '', '(인)', '', '상호',       sup.name,           '', '', '(인)']);
+    rows.push(['사업자번호', rcv.businessNumber, '', '', '',     '', '사업자번호', sup.businessNumber, '', '', '']);
+    rows.push(['대표자',     rcv.representative, '', '', '',     '', '대표자',     sup.representative, '', '', '']);
+    rows.push(['주소',       rcv.address,        '', '', '',     '', '주소',       sup.address,        '', '', '']);
+    rows.push(['연락처',     rcv.tel,            '', '', '',     '', '연락처',     sup.tel,            '', '', '']);
+    rows.push([]);
+    rows.push(['번호', '날짜', '품목명', '규격', '단위', '수량', '단가', '공급가액', '세액', '합계금액', '비고']);
+
+    let n = 0, gAmt = 0, gTax = 0;
+    txs.forEach(t => {
+      t.items.forEach(i => {
+        n++;
+        gAmt += i.amount; gTax += i.tax;
+        const master = items.find(m => m.id === i.itemId);
+        rows.push([n, t.date, i.itemName, (master && master.spec) || '', i.unit || '', i.quantity, i.unitPrice, i.amount, i.tax, i.amount + i.tax, i.notes || '']);
+      });
+    });
+    // 빈 양식이거나 줄이 적으면 손으로 쓸 수 있게 빈 줄 채움
+    for (let k = n; k < Math.max(n + 3, 15); k++) rows.push([k + 1, '', '', '', '', '', '', '', '', '', '']);
+
+    rows.push(['합  계', '', '', '', '', '', '', gAmt || '', gTax || '', (gAmt + gTax) || '', '']);
+    rows.push([]);
+    rows.push(['위와 같이 거래(납품)하였음을 확인합니다.']);
+    rows.push([]);
+    rows.push(['', '인수자 확인 :', '', '(서명/인)', '', '', '인계자 확인 :', '', '(서명/인)', '', '']);
+
+    const ws = XLSX.utils.aoa_to_sheet(rows);
+    ws['!cols'] = [{wch:5},{wch:11},{wch:20},{wch:10},{wch:6},{wch:7},{wch:10},{wch:12},{wch:10},{wch:12},{wch:12}];
+    ws['!merges'] = [{ s: { r: 0, c: 0 }, e: { r: 0, c: 10 } }];
+
+    let sheetName = (partner.name || '양식').replace(/[\\\/\?\*\[\]:]/g, '').slice(0, 25) || '양식';
+    let base = sheetName, i2 = 2;
+    while (used.has(sheetName)) sheetName = base + '_' + (i2++);
+    used.add(sheetName);
+    XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  });
+
+  xlsxSave(wb, '거래명세서');
 }
 
 // ── 거래내역 다운로드 ─────────────────────────────────────
