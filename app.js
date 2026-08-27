@@ -1074,7 +1074,7 @@ function renderItemProfitTab(el, filtered) {
     let bestIdx = -1, bestDiff = Infinity;
     purchases.forEach((p, idx) => {
       if (usedPurchases.has(idx)) return;
-      if (p.itemName !== sale.itemName) return;
+      if (!sameItemName(p.itemName, sale.itemName)) return;
       const diff = Math.abs((new Date(sale.date) - new Date(p.date)) / 86400000);
       if (diff <= itemMatchWindow && diff < bestDiff) { bestDiff = diff; bestIdx = idx; }
     });
@@ -2122,6 +2122,7 @@ function renderItems(el) {
           <input type="file" accept=".xlsx,.xls" style="display:none" onchange="uploadItemsExcel(this)">
         </label>
         <button class="btn btn-ghost" onclick="downloadItemListExcel()">📊 엑셀 다운로드</button>
+        <button class="btn btn-ghost" onclick="openItemNameMergeModal()">🔤 품목명 통일</button>
         <button class="btn btn-primary" onclick="openItemModal()">+ 품목 등록</button>
       </div>
     </div>
@@ -2470,6 +2471,138 @@ function togglePaidSection(cb) {
   // 현재는 체크박스만으로 충분 (isPaid 저장에 반영됨)
 }
 
+// ── 품목명 통일 도구 ──────────────────────────────────────
+// 거래내역에 쓰인 이름들을 유사도로 묶어, 오타로 갈라진 그룹을 찾는다
+function findItemNameClusters(threshold = 0.6) {
+  const stat = {};
+  transactions.forEach(t => t.items.forEach(i => {
+    const n = (i.itemName || '').trim();
+    if (!n) return;
+    const k = normItem(n);
+    if (!stat[k]) stat[k] = { name: n, count: 0, last: '' };
+    stat[k].count++;
+    if (t.date > stat[k].last) { stat[k].last = t.date; stat[k].name = n; }
+  }));
+  const names = Object.values(stat).sort((a, b) => b.count - a.count);
+
+  const used = new Set(), clusters = [];
+  names.forEach(a => {
+    if (used.has(normItem(a.name))) return;
+    const group = [a];
+    used.add(normItem(a.name));
+    names.forEach(b => {
+      if (used.has(normItem(b.name))) return;
+      const s = simRatio(a.name, b.name);
+      if (s >= threshold && s < 1) { group.push(b); used.add(normItem(b.name)); }
+    });
+    if (group.length > 1) clusters.push(group);
+  });
+  return clusters;
+}
+
+function openItemNameMergeModal() {
+  const clusters = findItemNameClusters();
+  if (!clusters.length) {
+    openModal('품목명 통일', `<div class="empty-state" style="padding:30px">
+      <div class="empty-icon">✅</div><p>비슷한 이름으로 갈라진 품목이 없습니다</p></div>
+      <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">닫기</button></div>`);
+    return;
+  }
+  const body = clusters.map((g, gi) => {
+    const opts = g.map((m, mi) =>
+      `<label style="display:flex;align-items:center;gap:8px;padding:5px 0;cursor:pointer">
+        <input type="radio" name="mg-${gi}" value="${m.name.replace(/"/g,'&quot;')}" ${mi===0?'checked':''}>
+        <span><strong>${m.name}</strong>
+          <span style="font-size:11px;color:var(--gray-500)">— ${m.count}건 · 최근 ${m.last}</span></span>
+      </label>`).join('');
+    return `<div class="card" style="margin-bottom:10px">
+      <div class="card-title" style="margin:0 0 6px">그룹 ${gi+1} — 어느 이름으로 통일할까요?</div>
+      ${opts}
+      <button class="btn btn-primary btn-sm" style="margin-top:8px" onclick="applyItemNameMerge(${gi})">이 이름으로 통일</button>
+    </div>`;
+  }).join('');
+
+  openModal('품목명 통일', `
+    <p style="font-size:12px;color:var(--gray-500);margin-bottom:12px">
+      오타나 띄어쓰기 차이로 갈라진 품목명입니다. 하나로 합치면 집계·수익분석이 정확해집니다.
+    </p>
+    ${body}
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">닫기</button></div>`, true);
+  window._nameClusters = clusters;
+}
+
+function applyItemNameMerge(gi) {
+  const group  = (window._nameClusters || [])[gi];
+  const picked = document.querySelector(`input[name="mg-${gi}"]:checked`)?.value;
+  if (!group || !picked) return;
+  const targets = group.map(m => normItem(m.name)).filter(n => n !== normItem(picked));
+  let changed = 0;
+  transactions.forEach(t => t.items.forEach(i => {
+    if (targets.includes(normItem(i.itemName))) { i.itemName = picked; changed++; }
+  }));
+  if (!changed) { alert('변경할 항목이 없습니다.'); return; }
+  saveTransactions();
+  alert(`${changed}건의 품목명을 "${picked}"(으)로 통일했습니다.`);
+  openItemNameMergeModal();
+}
+
+// ── 품목명 유사도 매칭 ────────────────────────────────────
+function normItem(s) {
+  return String(s || '').replace(/\s+/g, '').replace(/[()\[\]{}·・.,\-_/\\'"]/g, '').toLowerCase();
+}
+
+function _bigrams(s) {
+  const out = [];
+  for (let i = 0; i < s.length - 1; i++) out.push(s.slice(i, i + 2));
+  return out;
+}
+
+// Dice 계수 (0~1) — "동광산업" vs "동광 산업" = 1.0, "동광산업" vs "동광상사" ≈ 0.5
+function simRatio(a, b) {
+  const x = normItem(a), y = normItem(b);
+  if (!x || !y) return 0;
+  if (x === y) return 1;
+  if (x.length < 2 || y.length < 2) return 0;
+  const A = _bigrams(x), pool = _bigrams(y);
+  let hit = 0;
+  A.forEach(g => { const k = pool.indexOf(g); if (k > -1) { hit++; pool.splice(k, 1); } });
+  return (2 * hit) / (A.length + _bigrams(y).length);
+}
+
+// 같은 품목으로 볼 것인가 — 정규화 일치 또는 유사도 0.85 이상
+function sameItemName(a, b) {
+  return normItem(a) === normItem(b) || simRatio(a, b) >= 0.85;
+}
+
+// 거래내역에 실제로 쓰인 품목명 목록 (정규화 기준 중복 제거, 최신 것 유지)
+function pastItemNames() {
+  const map = {};
+  transactions.forEach(t => t.items.forEach(i => {
+    const n = (i.itemName || '').trim();
+    if (!n) return;
+    const k = normItem(n);
+    if (!map[k] || t.date > map[k].date)
+      map[k] = { name: n, date: t.date, unit: i.unit || '', price: i.unitPrice || 0, type: t.type };
+  }));
+  return Object.values(map);
+}
+
+// 최근 실거래 단가 — 같은 거래처 우선, 없으면 가장 최근 건
+function recentUnitPrice(itemName, type, vendorId) {
+  if (!normItem(itemName)) return null;
+  const hits = [];
+  transactions.forEach(t => {
+    if (t.type !== type) return;
+    t.items.forEach(i => {
+      if (sameItemName(i.itemName, itemName) && i.unitPrice > 0)
+        hits.push({ date: t.date, price: i.unitPrice, vendorId: t.vendorId || '', unit: i.unit || '' });
+    });
+  });
+  if (!hits.length) return null;
+  hits.sort((a, b) => b.date.localeCompare(a.date));
+  return (vendorId && hits.find(h => h.vendorId === vendorId)) || hits[0];
+}
+
 function newLineItem() {
   return { _id: uid(), itemId: '', itemName: '', unit: '', quantity: 1, unitPrice: 0, amount: 0, tax: 0, taxExempt: false, notes: '' };
 }
@@ -2515,14 +2648,49 @@ function onItemSearch(input, idx) {
   txLineItems[idx].itemName = input.value;
   const dd = document.getElementById(`item-dd-${idx}`);
   if (!q) { dd.classList.add('hidden'); return; }
-  const matched = items.filter(i =>
-    i.name.toLowerCase().includes(q) || (i.code||'').toLowerCase().includes(q) || (i.spec||'').toLowerCase().includes(q)
-  ).slice(0, 10);
-  if (!matched.length) { dd.classList.add('hidden'); return; }
-  dd.innerHTML = matched.map(i => `<div class="dropdown-item" onmousedown="selectItem(${idx},'${i.id}')">
-    <span>${i.name}${i.spec?` <small style="color:var(--gray-500)">(${i.spec})</small>`:''}</span>
-    <span class="item-code">${i.code||''} · ${i.unit||''}</span>
-  </div>`).join('');
+  const txType = document.querySelector('input[name="tx-type"]:checked')?.value || '매출';
+  const vId    = document.getElementById('tx-vendor-sel')?.value || '';
+  const raw    = input.value;
+
+  // 1) 품목 마스터 — 부분일치 + 유사도
+  const matched = items
+    .map(i => ({ i, s: Math.max(
+      (i.name.toLowerCase().includes(q) || (i.code||'').toLowerCase().includes(q) || (i.spec||'').toLowerCase().includes(q)) ? 1 : 0,
+      simRatio(raw, i.name)) }))
+    .filter(x => x.s >= 0.45).sort((a, b) => b.s - a.s).slice(0, 8).map(x => x.i);
+
+  // 2) 마스터에 없지만 과거 거래에서 쓴 이름 (오타 통일 유도)
+  const inMaster = new Set(items.map(i => normItem(i.name)));
+  const past = pastItemNames()
+    .filter(p => !inMaster.has(normItem(p.name)))
+    .map(p => ({ p, s: Math.max(p.name.toLowerCase().includes(q) ? 1 : 0, simRatio(raw, p.name)) }))
+    .filter(x => x.s >= 0.45).sort((a, b) => b.s - a.s).slice(0, 5).map(x => x.p);
+
+  // 3) 오타 경고 — 입력값과 비슷하지만 완전히 같지는 않은 기존 이름
+  const exact = [...items.map(i => i.name), ...pastItemNames().map(p => p.name)]
+    .some(n => normItem(n) === normItem(raw));
+  const near = !exact ? [...items.map(i => i.name), ...pastItemNames().map(p => p.name)]
+    .map(n => ({ n, s: simRatio(raw, n) })).filter(x => x.s >= 0.6).sort((a,b) => b.s - a.s)[0] : null;
+
+  if (!matched.length && !past.length && !near) { dd.classList.add('hidden'); return; }
+
+  const priceTag = name => {
+    const r = recentUnitPrice(name, txType, vId);
+    return r ? `<small style="color:var(--primary)">최근 ${fmt(r.price)}원</small>` : '';
+  };
+
+  dd.innerHTML =
+    (near ? `<div class="dropdown-item" style="background:#fffbeb" onmousedown="applyItemNameFix(${idx},'${near.n.replace(/'/g,"\\'")}')">
+        <span>⚠️ 혹시 <strong>${near.n}</strong>?</span><span class="item-code">클릭해서 통일</span>
+      </div>` : '') +
+    matched.map(i => `<div class="dropdown-item" onmousedown="selectItem(${idx},'${i.id}')">
+      <span>${i.name}${i.spec?` <small style="color:var(--gray-500)">(${i.spec})</small>`:''} ${priceTag(i.name)}</span>
+      <span class="item-code">${i.code||''} · ${i.unit||''}</span>
+    </div>`).join('') +
+    past.map(p => `<div class="dropdown-item" onmousedown="applyItemNameFix(${idx},'${p.name.replace(/'/g,"\\'")}')">
+      <span>${p.name} ${priceTag(p.name)}</span>
+      <span class="item-code">과거 거래 · ${p.unit||''}</span>
+    </div>`).join('');
   // modal-body 의 overflow:auto 를 피하기 위해 fixed 좌표로 배치
   const rect = input.getBoundingClientRect();
   dd.style.position  = 'fixed';
@@ -2536,12 +2704,35 @@ function onItemSearch(input, idx) {
 function selectItem(idx, itemId) {
   const item = items.find(i => i.id === itemId);
   if (!item) return;
-  const txType    = document.querySelector('input[name="tx-type"]:checked')?.value || '매출';
-  const unitPrice = txType === '매출' ? item.salesPrice : item.purchasePrice;
+  const txType   = document.querySelector('input[name="tx-type"]:checked')?.value || '매출';
+  const vendorId = document.getElementById('tx-vendor-sel')?.value || '';
+  // 마스터 고정단가보다 실제 최근 거래단가를 우선 (단가가 계속 바뀌는 품목 대응)
+  const recent    = recentUnitPrice(item.name, txType, vendorId);
+  const unitPrice = recent ? recent.price : (txType === '매출' ? item.salesPrice : item.purchasePrice);
   const qty       = txLineItems[idx].quantity || 1;
   txLineItems[idx] = { ...txLineItems[idx], itemId: item.id, itemName: item.name, unit: item.unit||'',
     unitPrice: unitPrice||0, taxExempt: item.taxExempt,
     amount: qty*(unitPrice||0), tax: item.taxExempt ? 0 : Math.round(qty*(unitPrice||0)*0.1) };
+  renderLineItems();
+  document.getElementById(`item-dd-${idx}`)?.classList.add('hidden');
+}
+
+// 과거에 쓴 이름 그대로 채택 (오타 통일) + 최근 단가 반영
+function applyItemNameFix(idx, name) {
+  const txType   = document.querySelector('input[name="tx-type"]:checked')?.value || '매출';
+  const vendorId = document.getElementById('tx-vendor-sel')?.value || '';
+  const master   = items.find(i => normItem(i.name) === normItem(name));
+  const recent   = recentUnitPrice(name, txType, vendorId);
+  const line     = txLineItems[idx];
+  const qty      = line.quantity || 1;
+  const unitPrice = recent ? recent.price
+                  : master ? (txType === '매출' ? master.salesPrice : master.purchasePrice) || 0
+                  : line.unitPrice || 0;
+  const taxExempt = master ? master.taxExempt : line.taxExempt;
+  txLineItems[idx] = { ...line, itemId: master ? master.id : '', itemName: name,
+    unit: (recent && recent.unit) || (master && master.unit) || line.unit || '',
+    unitPrice, taxExempt,
+    amount: qty * unitPrice, tax: taxExempt ? 0 : Math.round(qty * unitPrice * 0.1) };
   renderLineItems();
   document.getElementById(`item-dd-${idx}`)?.classList.add('hidden');
 }
@@ -2632,7 +2823,7 @@ function validateTx(date, type, vendorId, payeeName, validItems, editId) {
     const hist = [];
     transactions.forEach(t => {
       if (t.id === editId || t.type !== type) return;
-      t.items.forEach(i => { if (i.itemName === line.itemName && i.unitPrice > 0) hist.push(i.unitPrice); });
+      t.items.forEach(i => { if (sameItemName(i.itemName, line.itemName) && i.unitPrice > 0) hist.push(i.unitPrice); });
     });
     if (hist.length >= 2 && line.unitPrice > 0) {
       const avg  = hist.reduce((s, p) => s + p, 0) / hist.length;
@@ -2640,6 +2831,16 @@ function validateTx(date, type, vendorId, payeeName, validItems, editId) {
       if (Math.abs(diff) >= 30)
         warns.push(`"${line.itemName}" 단가 ${fmt(line.unitPrice)}원 — 평소 평균 ${fmt(Math.round(avg))}원 대비 ${diff > 0 ? '+' : ''}${diff}%`);
     }
+  });
+
+  // 품목명 오타 의심 — 기존 이름과 비슷하지만 정확히 같지 않음
+  const known = [...items.map(i => i.name), ...pastItemNames().map(p => p.name)];
+  validItems.forEach(line => {
+    if (!line.itemName) return;
+    if (known.some(n => normItem(n) === normItem(line.itemName))) return;
+    const near = known.map(n => ({ n, s: simRatio(line.itemName, n) }))
+                      .filter(x => x.s >= 0.6).sort((a, b) => b.s - a.s)[0];
+    if (near) warns.push(`"${line.itemName}" — 기존 "${near.n}"와 비슷합니다. 오타면 이름을 통일하세요 (집계가 따로 잡힙니다).`);
   });
 
   return warns;
