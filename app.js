@@ -920,10 +920,10 @@ function renderVendorSummaryTab(el, filtered) {
   const src = summaryVendorFilter ? filtered.filter(t => t.type === summaryVendorFilter) : filtered;
   const byVendor = {};
   src.forEach(t => {
-    const key = t.vendorId || '__etc__';
+    const key = t.vendorId || 'payee:' + (t.payeeName || '(기타)');
     const v   = vendors.find(v => v.id === t.vendorId);
     if (!byVendor[key]) byVendor[key] = {
-      name: v ? v.companyName : (t.payeeName || '(기타)'), vendorId: t.vendorId || '',
+      name: v ? v.companyName : (t.payeeName || '(기타)'), vendorId: t.vendorId || '', key,
       sales: 0, salesUnpaid: 0, purchase: 0, purchaseUnpaid: 0
     };
     const total = t.items.reduce((s, i) => s + i.amount + i.tax, 0);
@@ -956,9 +956,7 @@ function renderVendorSummaryTab(el, filtered) {
   list.forEach(v=>{ totPurch+=v.purchase; totUnpaid+=v.purchaseUnpaid; totSales+=v.sales; totSalesUnpaid+=v.salesUnpaid; });
 
   const rows = list.map(v => {
-    const nameCell = v.vendorId
-      ? `<a class="vendor-link" onclick="openVendorDetail('${v.vendorId}','${start}','${end}')">${v.name}</a>`
-      : v.name;
+    const nameCell = `<a class="vendor-link" onclick="openVendorDetail('${String(v.key).replace(/'/g, "\\'")}','${start}','${end}')">${v.name}</a>`;
     return `<tr>
       <td style="text-align:right;color:var(--success)">${v.purchase ? fmt(v.purchase)+'원' : ''}</td>
       <td style="text-align:right;color:var(--danger);font-weight:${v.purchaseUnpaid?'600':'400'}">${v.purchaseUnpaid ? fmt(v.purchaseUnpaid)+'원' : ''}</td>
@@ -1023,7 +1021,7 @@ function exportVendorSummaryXlsx() {
     .filter(t => t.date >= start && t.date <= end);
   const byVendor = {};
   src.forEach(t => {
-    const key = t.vendorId || '__etc__';
+    const key = t.vendorId || 'payee:' + (t.payeeName || '(기타)');
     const v = vendors.find(v => v.id === t.vendorId);
     if (!byVendor[key]) byVendor[key] = { name: v?v.companyName:(t.payeeName||'(기타)'), sales:0, salesUnpaid:0, purchase:0, purchaseUnpaid:0 };
     const total = t.items.reduce((s,i)=>s+i.amount+i.tax,0);
@@ -1580,12 +1578,15 @@ function reopenVendorDetail() {
 
 function openVendorDetail(vendorId, rangeStart, rangeEnd) {
   currentDetailVendorId = vendorId;
-  const vendor = vendors.find(v => v.id === vendorId);
+  const isPayee = String(vendorId || '').startsWith('payee:');
+  const payee   = isPayee ? String(vendorId).slice(6) : '';
+  const vendor  = isPayee ? null : vendors.find(v => v.id === vendorId);
   const { start, end } = (rangeStart && rangeEnd) ? { start: rangeStart, end: rangeEnd } : getPeriodRange(currentPeriod);
   currentDetailRange = { start, end };
 
   const vendorTxs = transactions
-    .filter(t => t.vendorId === vendorId && t.date >= start && t.date <= end)
+    .filter(t => (isPayee ? !t.vendorId && (t.payeeName || '(기타)') === payee : t.vendorId === vendorId)
+                 && t.date >= start && t.date <= end)
     .sort((a, b) => b.date.localeCompare(a.date));
 
   const totalSales    = vendorTxs.filter(t => t.type === '매출').reduce((s,t) => s + t.items.reduce((a,i) => a+i.amount+i.tax, 0), 0);
@@ -1664,7 +1665,7 @@ function openVendorDetail(vendorId, rangeStart, rangeEnd) {
       <button class="btn btn-primary btn-sm" onclick="bulkMarkPaid()">선택 결제완료</button>
     </div>`;
 
-  openModal(`${vendor ? vendor.companyName : ''} — 거래 상세`, html, true);
+  openModal(`${vendor ? vendor.companyName : (payee || '')} — 거래 상세`, html, true);
 
   setTimeout(() => {
     document.querySelectorAll('.tx-checkbox').forEach(cb => {
