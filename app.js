@@ -48,19 +48,62 @@ function saveQuotes()       { DB.save('acc_quotes', quotes);              schedu
 
 // ── 자동 구글시트 백업 ────────────────────────────────────
 let _autoBackupTimer = null;
+let _backupDirty     = false;
 
 function scheduleSheetsBackup() {
   if (!APPS_SCRIPT_URL || !SHEETS_SECRET) return;
+  localStorage.setItem('acc_saved_at', new Date().toISOString());
+  _backupDirty = true;
   clearTimeout(_autoBackupTimer);
   _autoBackupTimer = setTimeout(runAutoSheetsBackup, 3000);
 }
 
-async function runAutoSheetsBackup() {
+function _collectAccStorage() {
   const storage = {};
   for (let i = 0; i < localStorage.length; i++) {
     const key = localStorage.key(i);
     if (key.startsWith('acc_') || key === '_biz_migrated') storage[key] = localStorage.getItem(key);
   }
+  return storage;
+}
+
+// 탭을 닫아도 대기 중인 백업이 유실되지 않게 즉시 전송
+window.addEventListener('pagehide', () => {
+  if (!_backupDirty || !APPS_SCRIPT_URL || !navigator.sendBeacon) return;
+  clearTimeout(_autoBackupTimer);
+  navigator.sendBeacon(APPS_SCRIPT_URL, new Blob(
+    [JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', data: _collectAccStorage(), snapshot: 'none' })],
+    { type: 'text/plain' }));
+  _backupDirty = false;
+});
+
+// 시작 시 시트와 자동 동기화 — 다른 컴퓨터에서 저장한 최신 데이터를 자동 반영
+async function autoSyncFromSheets() {
+  if (!APPS_SCRIPT_URL || !SHEETS_SECRET) return;
+  try {
+    const res  = await fetch(APPS_SCRIPT_URL, {
+      method: 'POST',
+      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'restoreStorage' })
+    });
+    const json = await res.json();
+    if (!json.success || !json.data || !Object.keys(json.data).length) return;
+    const remoteAt = json.data.acc_saved_at || '';
+    const localAt  = localStorage.getItem('acc_saved_at') || '';
+    if (!remoteAt || remoteAt <= localAt) return;
+    if (!localAt && transactions.length &&
+        !confirm('☁ 구글시트에 더 최신 데이터가 있습니다.\n이 컴퓨터의 데이터를 시트 데이터로 교체할까요?')) return;
+    Object.entries(json.data).forEach(([k, v]) => {
+      if (k === 'acc_sheets_url' || k === 'acc_sheets_key') return;
+      localStorage.setItem(k, v);
+    });
+    sessionStorage.setItem('acc_auto_synced', '1');
+    location.reload();
+  } catch {}
+}
+
+async function runAutoSheetsBackup() {
+  _backupDirty = false;
+  const storage = _collectAccStorage();
   try {
     const res  = await fetch(APPS_SCRIPT_URL, {
       method: 'POST',
@@ -131,11 +174,8 @@ let SHEETS_SECRET   = localStorage.getItem('acc_sheets_key') || '';
 
 async function backupToSheets() {
   if (!APPS_SCRIPT_URL) { openSheetsConfig(); return; }
-  const storage = {};
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key.startsWith('acc_') || key === '_biz_migrated') storage[key] = localStorage.getItem(key);
-  }
+  localStorage.setItem('acc_saved_at', new Date().toISOString());
+  const storage = _collectAccStorage();
   const btn = document.getElementById('sheets-backup-btn');
   if (btn) { btn.disabled = true; btn.textContent = '백업 중...'; }
   try {
@@ -5908,4 +5948,10 @@ document.addEventListener('DOMContentLoaded', () => {
   renderSidebarBiz();
   render('home');
   renderBackupStatus();
+  if (sessionStorage.getItem('acc_auto_synced')) {
+    sessionStorage.removeItem('acc_auto_synced');
+    showSheetsBackupStatus('☁ 다른 기기의 변경사항을 불러왔습니다', 'success');
+  } else {
+    autoSyncFromSheets();
+  }
 });
