@@ -728,7 +728,81 @@ function navigate(page) {
   else stopCandidatesAutoSync();
 }
 
+// ── 반복 거래 (매월 자동 등록) ────────────────────────────
+function loadRecurring()     { return DB.load('acc_recurring', '[]'); }
+function saveRecurring(list) { DB.save('acc_recurring', list); }
+
+function runRecurringTransactions() {
+  const list = loadRecurring();
+  if (!list.length) return;
+  const now = today();
+  const ym  = now.slice(0, 7);
+  const todayDay = Number(now.slice(8, 10));
+  let changed = false;
+  list.forEach(r => {
+    if (r.enabled === false || r.lastRun === ym) return;
+    const lastDay = new Date(Number(ym.slice(0, 4)), Number(ym.slice(5, 7)), 0).getDate();
+    const day = Math.min(r.day, lastDay);
+    if (todayDay < day) return;
+    const date = ym + '-' + String(day).padStart(2, '0');
+    transactions.push({ id: uid(), date, type: r.type, accountCategory: r.accountCategory, bizCategory: r.bizCategory || '기타',
+      vendorId: r.vendorId || '', payeeName: r.payeeName || '', paymentMethod: r.paymentMethod || '계좌이체',
+      isPaid: !!r.isPaid, paidAt: r.isPaid ? date : '', paidMethod: r.isPaid ? (r.paymentMethod || '계좌이체') : '',
+      items: r.items.map(i => ({ ...i, _id: uid() })) });
+    r.lastRun = ym;
+    changed = true;
+  });
+  if (changed) { saveTransactions(); saveRecurring(list); }
+}
+
+function addRecurringFromTx(id) {
+  const t = transactions.find(t => t.id === id);
+  if (!t) return;
+  const d = prompt('매월 며칠에 자동 등록할까요? (1~31)', String(Number(t.date.slice(8, 10))));
+  if (d == null) return;
+  const day = parseInt(d, 10);
+  if (!(day >= 1 && day <= 31)) { alert('1~31 사이 숫자를 입력하세요.'); return; }
+  const list = loadRecurring();
+  list.push({ id: uid(), day, enabled: true, lastRun: today().slice(0, 7),
+    type: t.type, accountCategory: t.accountCategory, bizCategory: t.bizCategory,
+    vendorId: t.vendorId || '', payeeName: t.payeeName || '', paymentMethod: t.paymentMethod || '',
+    isPaid: !!t.isPaid, items: t.items.map(i => ({ ...i })) });
+  saveRecurring(list);
+  alert(`🔁 등록됐습니다. 다음 달부터 매월 ${day}일에 자동 입력됩니다.\n(거래내역 → 🔁 반복 거래에서 관리)`);
+}
+
+function openRecurringModal() {
+  const list = loadRecurring();
+  const rows = list.map((r, i) => {
+    const v = vendors.find(v => v.id === r.vendorId);
+    const amt = r.items.reduce((s, x) => s + (x.amount || 0) + (x.tax || 0), 0);
+    return `<tr style="${r.enabled === false ? 'opacity:0.5' : ''}">
+      <td style="text-align:center;white-space:nowrap">매월 ${r.day}일</td>
+      <td>${r.type === '매출' ? '<span class="badge badge-sales">매출</span>' : '<span class="badge badge-purchase">매입</span>'}</td>
+      <td>${v ? v.companyName : (r.payeeName || '-')}</td>
+      <td>${r.items[0]?.itemName || '-'}${r.items.length > 1 ? ` 외 ${r.items.length - 1}건` : ''}</td>
+      <td style="text-align:right">${fmt(amt)}원</td>
+      <td><div class="td-actions">
+        ${r.enabled === false
+          ? `<button class="btn btn-success btn-sm" onclick="toggleRecurring(${i})">▶ 재개</button>`
+          : `<button class="btn btn-ghost btn-sm" onclick="toggleRecurring(${i})">⏸ 중지</button>`}
+        <button class="btn btn-danger btn-sm" onclick="deleteRecurring(${i})">🗑</button>
+      </div></td>
+    </tr>`;
+  }).join('') || `<tr><td colspan="6"><div class="empty-state" style="padding:20px"><div class="empty-icon">🔁</div><p>등록된 반복 거래가 없습니다.<br>거래내역 행의 🔁 버튼으로 등록하세요.</p></div></td></tr>`;
+  openModal('반복 거래 관리', `
+    <p style="font-size:12px;color:var(--gray-500);margin-bottom:10px">임대료·통신비처럼 매달 같은 거래를 자동 입력합니다. 등록일이 지나서 앱을 열어도 그 달 치는 입력됩니다.</p>
+    <div class="table-wrapper"><table>
+      <thead><tr><th>주기</th><th>구분</th><th>거래처</th><th>품목</th><th style="text-align:right">금액</th><th>관리</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table></div>
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">닫기</button></div>`, true);
+}
+function toggleRecurring(i) { const l = loadRecurring(); if (!l[i]) return; l[i].enabled = l[i].enabled === false; saveRecurring(l); openRecurringModal(); }
+function deleteRecurring(i) { const l = loadRecurring(); if (!l[i]) return; if (!confirm('이 반복 거래를 삭제할까요?')) return; l.splice(i, 1); saveRecurring(l); openRecurringModal(); }
+
 function render(page) {
+  runRecurringTransactions();
   const el = document.getElementById('page-' + page);
   if (!el) return;
   if (page === 'home')         renderHome(el);
@@ -2309,6 +2383,7 @@ function txRowsHtml(filtered) {
         <button class="btn btn-ghost btn-sm" onclick="printTxStatement('${t.id}')">🖨</button>
         <button class="btn btn-ghost btn-sm" onclick="viewTransaction('${t.id}')">상세</button>
         <button class="btn btn-ghost btn-sm" onclick="copyTransaction('${t.id}')">복사</button>
+        <button class="btn btn-ghost btn-sm" title="매월 자동 등록" onclick="addRecurringFromTx('${t.id}')">🔁</button>
         <button class="btn btn-ghost btn-sm" onclick="editTransaction('${t.id}')">수정</button>
         <button class="btn btn-danger btn-sm" onclick="deleteTransaction('${t.id}')">삭제</button>
       </div></td>
@@ -2335,6 +2410,7 @@ function renderTransactions(el) {
           📷 사진 입력
           <input type="file" accept="image/*" style="display:none" onchange="handlePhotoTx(this)">
         </label>
+        <button class="btn btn-ghost" onclick="openRecurringModal()">🔁 반복 거래</button>
         <button class="btn btn-ghost" onclick="openTaxPaymentModal()">💸 세금납부</button>
         <button class="btn btn-primary" onclick="openTransactionModal()">+ 거래 입력</button>
       </div>
@@ -4230,6 +4306,40 @@ function downloadJournalExcel() {
 
 let _taxAIText = '';
 
+// 부가세 예상 (일반과세자 반기 신고 기준) — 매출세액 − 매입세액
+function vatEstimateHtml() {
+  const year = new Date().getFullYear();
+  const halves = [
+    { label: `1기 (1~6월)`,  start: `${year}-01-01`, end: `${year}-06-30`, due: `${year}-07-25 신고·납부` },
+    { label: `2기 (7~12월)`, start: `${year}-07-01`, end: `${year}-12-31`, due: `${year + 1}-01-25 신고·납부` },
+  ];
+  const cells = halves.map(h => {
+    let salesVat = 0, purchVat = 0;
+    transactions.forEach(t => {
+      if (t.date < h.start || t.date > h.end) return;
+      if ((t.accountCategory || '').startsWith('세금납부')) return;
+      const vat = t.items.reduce((s, i) => s + (i.tax || 0), 0);
+      if (t.type === '매출') salesVat += vat; else purchVat += vat;
+    });
+    const pay = salesVat - purchVat;
+    return `<div style="flex:1;min-width:220px;border:1px solid var(--gray-200);border-radius:8px;padding:12px 14px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:8px">${h.label} <span style="font-size:11px;font-weight:400;color:var(--gray-400)">${h.due}</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:3px"><span style="color:var(--gray-500)">매출세액</span><span>${fmt(salesVat)}원</span></div>
+      <div style="display:flex;justify-content:space-between;font-size:12.5px;margin-bottom:6px"><span style="color:var(--gray-500)">매입세액 (공제)</span><span>− ${fmt(purchVat)}원</span></div>
+      <div style="display:flex;justify-content:space-between;font-weight:700;border-top:1px solid var(--gray-200);padding-top:6px">
+        <span>${pay >= 0 ? '예상 납부액' : '예상 환급액'}</span>
+        <span style="color:${pay >= 0 ? '#dc2626' : '#16a34a'}">${fmt(Math.abs(pay))}원</span>
+      </div>
+    </div>`;
+  }).join('');
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div style="font-size:13px;font-weight:700;margin-bottom:12px;padding-bottom:8px;border-bottom:1px solid var(--gray-200)">🧾 부가세 예상 (${year}년 · 일반과세자 기준)</div>
+      <div style="display:flex;gap:12px;flex-wrap:wrap">${cells}</div>
+      <div style="font-size:11px;color:var(--gray-400);margin-top:8px">장부에 입력된 세액 기준 추정치입니다. 신용카드 매출 세액공제 등은 미반영이니 실제 신고액과 다를 수 있습니다.</div>
+    </div>`;
+}
+
 function renderTaxPage(el) {
   const settings = loadTaxSettings();
   const salary0 = settings.salary || 52000000;
@@ -4252,6 +4362,8 @@ function renderTaxPage(el) {
         <button class="btn btn-primary btn-sm" onclick="saveTaxInputs()">💾 설정 저장</button>
       </div>
     </div>
+
+    ${vatEstimateHtml()}
 
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:16px">
       <!-- 근로소득 -->
