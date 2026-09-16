@@ -8,3 +8,6 @@ Thumbs.db
 # 에디터
 .vscode/
 *.swp
+
+# PWA 매니페스트는 예외
+!manifest.json

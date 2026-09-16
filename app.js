@@ -823,7 +823,53 @@ function renderHome(el) {
       </div>
     </div>
 
+    ${agedReceivablesHtml()}
+
     ${buildMonthlyReport()}`;
+}
+
+// 미수금 리마인더 — 거래처별 미수 합계 + 가장 오래된 건 기준 경과일
+function agedReceivablesHtml() {
+  const byKey = {};
+  transactions.forEach(t => {
+    if (t.type !== '매출' || t.isPaid) return;
+    const key = t.vendorId || 'payee:' + (t.payeeName || '(기타)');
+    const v   = vendors.find(v => v.id === t.vendorId);
+    if (!byKey[key]) byKey[key] = { key, name: v ? v.companyName : (t.payeeName || '(기타)'), amount: 0, count: 0, oldest: t.date };
+    byKey[key].amount += t.items.reduce((s, i) => s + i.amount + i.tax, 0);
+    byKey[key].count++;
+    if (t.date < byKey[key].oldest) byKey[key].oldest = t.date;
+  });
+  const list = Object.values(byKey);
+  if (!list.length) return '';
+  const now = new Date(today());
+  list.forEach(r => { r.days = Math.max(0, Math.floor((now - new Date(r.oldest)) / 86400000)); });
+  list.sort((a, b) => b.days - a.days);
+  const over30 = list.filter(r => r.days >= 30).length;
+
+  const rows = list.slice(0, 8).map(r => {
+    const c = r.days >= 30 ? '#dc2626' : r.days >= 15 ? '#d97706' : 'var(--gray-500)';
+    return `<tr>
+      <td><a class="vendor-link" onclick="openVendorDetail(decodeURIComponent('${_payeeKeyAttr(r.key)}'),'2000-01-01','${today()}')">${r.name}</a></td>
+      <td style="text-align:right;font-weight:600;color:var(--warning)">${fmt(r.amount)}원</td>
+      <td style="text-align:center;color:var(--gray-500)">${r.count}건</td>
+      <td style="text-align:center;color:${c};font-weight:${r.days >= 15 ? 700 : 400}">${r.days}일${r.days >= 30 ? ' ⚠️' : ''}</td>
+    </tr>`;
+  }).join('');
+  const more = list.length > 8 ? `<div style="font-size:11px;color:var(--gray-400);margin-top:6px">외 ${list.length - 8}곳 — 집계 페이지에서 전체 확인</div>` : '';
+
+  return `
+    <div class="card" style="margin-bottom:28px;border-left:4px solid ${over30 ? '#dc2626' : 'var(--warning)'}">
+      <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <span>⏰ 미수금 리마인더 <span style="font-size:11px;color:var(--gray-400);font-weight:400">가장 오래된 미수 기준 · 이름 클릭 → 상세</span></span>
+        ${over30 ? `<span class="badge" style="background:#fef2f2;color:#dc2626">⚠️ 30일 초과 ${over30}곳</span>` : ''}
+      </div>
+      <div class="table-wrapper" style="margin-top:8px"><table>
+        <thead><tr><th>거래처</th><th style="text-align:right">미수금</th><th style="text-align:center">건수</th><th style="text-align:center">경과</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table></div>
+      ${more}
+    </div>`;
 }
 
 // ── SUMMARY PAGE ──────────────────────────────────────────
