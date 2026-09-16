@@ -544,10 +544,14 @@ function deleteSelected(page) {
 }
 
 // 거래처 상세에서 날짜/품목 클릭 → 거래내역 페이지에서 그 날짜 거래 표시
+function _payeeKeyAttr(key) { return encodeURIComponent(String(key || '')).replace(/'/g, '%27'); }
+
 function goToTxFromDetail(date, vendorId) {
   closeModal();
-  txSearch = '';
-  txFilter = { type: '', vendorId: vendorId || '', dateFrom: date, dateTo: date, paid: '' };
+  const isPayee = String(vendorId || '').startsWith('payee:');
+  const payee   = isPayee ? String(vendorId).slice(6) : '';
+  txSearch = isPayee && payee !== '(기타)' ? payee : '';
+  txFilter = { type: '', vendorId: isPayee ? '' : (vendorId || ''), dateFrom: date, dateTo: date, paid: '' };
   navigate('transactions');
 }
 
@@ -923,7 +927,7 @@ function renderVendorSummaryTab(el, filtered) {
     const key = t.vendorId || 'payee:' + (t.payeeName || '(기타)');
     const v   = vendors.find(v => v.id === t.vendorId);
     if (!byVendor[key]) byVendor[key] = {
-      name: v ? v.companyName : (t.payeeName || '(기타)'), vendorId: t.vendorId || '', key,
+      name: v ? v.companyName : (t.payeeName || '(기타)'), key,
       sales: 0, salesUnpaid: 0, purchase: 0, purchaseUnpaid: 0
     };
     const total = t.items.reduce((s, i) => s + i.amount + i.tax, 0);
@@ -956,7 +960,7 @@ function renderVendorSummaryTab(el, filtered) {
   list.forEach(v=>{ totPurch+=v.purchase; totUnpaid+=v.purchaseUnpaid; totSales+=v.sales; totSalesUnpaid+=v.salesUnpaid; });
 
   const rows = list.map(v => {
-    const nameCell = `<a class="vendor-link" onclick="openVendorDetail('${String(v.key).replace(/'/g, "\\'")}','${start}','${end}')">${v.name}</a>`;
+    const nameCell = `<a class="vendor-link" onclick="openVendorDetail(decodeURIComponent('${_payeeKeyAttr(v.key)}'),'${start}','${end}')">${v.name}</a>`;
     return `<tr>
       <td style="text-align:right;color:var(--success)">${v.purchase ? fmt(v.purchase)+'원' : ''}</td>
       <td style="text-align:right;color:var(--danger);font-weight:${v.purchaseUnpaid?'600':'400'}">${v.purchaseUnpaid ? fmt(v.purchaseUnpaid)+'원' : ''}</td>
@@ -1017,8 +1021,8 @@ function renderVendorSummaryTab(el, filtered) {
 function exportVendorSummaryXlsx() {
   if (typeof XLSX === 'undefined') { alert('잠시 후 다시 시도해주세요 (라이브러리 로딩 중)'); return; }
   const { start, end } = getSummaryRange();
-  const src = (summaryVendorFilter ? transactions.filter(t=>t.type===summaryVendorFilter) : transactions)
-    .filter(t => t.date >= start && t.date <= end);
+  const base = summaryAllBiz ? getAllBizTransactions(start, end) : transactions.filter(t => t.date >= start && t.date <= end);
+  const src  = summaryVendorFilter ? base.filter(t => t.type === summaryVendorFilter) : base;
   const byVendor = {};
   src.forEach(t => {
     const key = t.vendorId || 'payee:' + (t.payeeName || '(기타)');
@@ -1609,9 +1613,9 @@ function openVendorDetail(vendorId, rangeStart, rangeEnd) {
       : `<button class="btn btn-ghost btn-sm" style="margin-top:4px;padding:2px 8px;color:var(--gray-400)" onclick="unmarkPaid('${t.id}')">↩ 취소</button>`;
     return `<tr>
       <td style="text-align:center"><input type="checkbox" class="tx-checkbox" value="${t.id}" checked></td>
-      <td><a class="vendor-link" onclick="goToTxFromDetail('${t.date}','${vendorId}')" title="거래내역에서 이 날짜 보기">${t.date}</a></td>
+      <td><a class="vendor-link" onclick="goToTxFromDetail('${t.date}',decodeURIComponent('${_payeeKeyAttr(vendorId)}'))" title="거래내역에서 이 날짜 보기">${t.date}</a></td>
       <td>${t.type === '매출' ? '<span class="badge badge-sales">매출</span>' : '<span class="badge badge-purchase">매입</span>'}</td>
-      <td><a class="vendor-link" onclick="goToTxFromDetail('${t.date}','${vendorId}')" title="거래내역에서 이 날짜 보기">${summary}</a></td>
+      <td><a class="vendor-link" onclick="goToTxFromDetail('${t.date}',decodeURIComponent('${_payeeKeyAttr(vendorId)}'))" title="거래내역에서 이 날짜 보기">${summary}</a></td>
       <td style="text-align:right">${fmt(amt)}원</td>
       <td style="text-align:right">${fmt(tax)}원</td>
       <td style="text-align:right"><strong>${fmt(amt+tax)}원</strong></td>
@@ -1622,7 +1626,7 @@ function openVendorDetail(vendorId, rangeStart, rangeEnd) {
   const periodStr = `${start} ~ ${end}`;
 
   const html = `
-    <input type="hidden" id="detail-vendor-id" value="${vendorId}">
+    <input type="hidden" id="detail-vendor-id" value="${_payeeKeyAttr(vendorId)}">
     <p style="font-size:12px;color:var(--gray-500);margin-bottom:14px">기간: ${periodStr}</p>
 
     <div class="detail-stats">
@@ -1828,21 +1832,22 @@ function markPaidFromList(txId) {
 
 // ── STATEMENT / EXCEL ─────────────────────────────────────
 function downloadStatementFromModal() {
-  const vendorId = document.getElementById('detail-vendor-id').value;
+  const vendorId = decodeURIComponent(document.getElementById('detail-vendor-id').value);
   const checked  = [...document.querySelectorAll('.tx-checkbox:checked')].map(cb => cb.value);
   if (!checked.length) { alert('거래를 선택하세요.'); return; }
   downloadStatement(checked, vendorId);
 }
 
 function downloadExcelFromModal() {
-  const vendorId = document.getElementById('detail-vendor-id').value;
+  const vendorId = decodeURIComponent(document.getElementById('detail-vendor-id').value);
   const checked  = [...document.querySelectorAll('.tx-checkbox:checked')].map(cb => cb.value);
   if (!checked.length) { alert('거래를 선택하세요.'); return; }
   downloadExcel(checked, vendorId);
 }
 
 function downloadStatement(txIds, vendorId) {
-  const vendor      = vendors.find(v => v.id === vendorId);
+  const isPayee     = String(vendorId || '').startsWith('payee:');
+  const vendor      = isPayee ? { companyName: String(vendorId).slice(6) } : vendors.find(v => v.id === vendorId);
   const selectedTxs = txIds.map(id => transactions.find(t => t.id === id)).filter(Boolean).sort((a,b) => a.date.localeCompare(b.date));
   const win = window.open('', '_blank', 'width=900,height=750');
   win.document.write(generateStatementHTML(selectedTxs, vendor));
@@ -1929,7 +1934,8 @@ td{border:1px solid #aaa;padding:4px;text-align:center}
 
 function downloadExcel(txIds, vendorId) {
   if (typeof XLSX === 'undefined') { alert('엑셀 라이브러리 로딩 중입니다. 잠시 후 다시 시도해주세요.'); return; }
-  const vendor      = vendors.find(v => v.id === vendorId);
+  const isPayee     = String(vendorId || '').startsWith('payee:');
+  const vendor      = isPayee ? { companyName: String(vendorId).slice(6) } : vendors.find(v => v.id === vendorId);
   const vendorName  = vendor ? vendor.companyName : '거래처';
   const selectedTxs = txIds.map(id => transactions.find(t => t.id === id)).filter(Boolean).sort((a,b) => a.date.localeCompare(b.date));
 
@@ -2788,14 +2794,14 @@ function onItemSearch(input, idx) {
   };
 
   dd.innerHTML =
-    (near ? `<div class="dropdown-item" style="background:#fffbeb" onmousedown="applyItemNameFix(${idx},'${near.n.replace(/'/g,"\\'")}')">
+    (near ? `<div class="dropdown-item" style="background:#fffbeb" onmousedown="applyItemNameFix(${idx},decodeURIComponent('${_payeeKeyAttr(near.n)}'))">
         <span>⚠️ 혹시 <strong>${near.n}</strong>?</span><span class="item-code">클릭해서 통일</span>
       </div>` : '') +
     matched.map(i => `<div class="dropdown-item" onmousedown="selectItem(${idx},'${i.id}')">
       <span>${i.name}${i.spec?` <small style="color:var(--gray-500)">(${i.spec})</small>`:''} ${priceTag(i.name)}</span>
       <span class="item-code">${i.code||''} · ${i.unit||''}</span>
     </div>`).join('') +
-    past.map(p => `<div class="dropdown-item" onmousedown="applyItemNameFix(${idx},'${p.name.replace(/'/g,"\\'")}')">
+    past.map(p => `<div class="dropdown-item" onmousedown="applyItemNameFix(${idx},decodeURIComponent('${_payeeKeyAttr(p.name)}'))">
       <span>${p.name} ${priceTag(p.name)}</span>
       <span class="item-code">과거 거래 · ${p.unit||''}</span>
     </div>`).join('');
