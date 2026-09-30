@@ -483,7 +483,10 @@ function refocusSearch(el, sel, pos) {
   try { input.setSelectionRange(pos, pos); } catch (_) {}
 }
 function fmt(n) { return Number(n || 0).toLocaleString('ko-KR'); }
-function today(){ return new Date().toISOString().slice(0, 10); }
+function localDateStr(d) {
+  return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+function today(){ return localDateStr(new Date()); }
 
 // ── Period ────────────────────────────────────────────────
 let currentPeriod    = 'month';
@@ -507,7 +510,7 @@ let currentReportYear = new Date().getFullYear();
 
 function getPeriodRange(period) {
   const now = new Date();
-  const str = d => d.toISOString().slice(0, 10);
+  const str = localDateStr;
   switch (period) {
     case 'today':     { const d = str(now); return { start: d, end: d }; }
     case 'yesterday': { const y = new Date(now); y.setDate(y.getDate()-1); const d = str(y); return { start: d, end: d }; }
@@ -1051,7 +1054,7 @@ function renderSummary(el) {
 
 function getSummaryRange() {
   const now = new Date();
-  const str = d => d.toISOString().slice(0, 10);
+  const str = localDateStr;
   switch (summaryPeriod) {
     case 'today':     { const d = str(now); return { start: d, end: d }; }
     case 'yesterday': { const y = new Date(now); y.setDate(y.getDate()-1); const d = str(y); return { start: d, end: d }; }
@@ -3707,7 +3710,7 @@ function openQuoteModal(id = null, type = '견적서') {
   ).join('');
 
   const d30 = new Date(); d30.setDate(d30.getDate()+30);
-  const defaultValid = d30.toISOString().slice(0,10);
+  const defaultValid = localDateStr(d30);
 
   const html = `
     <div class="form-grid">
@@ -5337,7 +5340,7 @@ function exportExpensesExcel() {
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(detail), '경비상세');
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(summary), '계정별합계');
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localDateStr(new Date());
   XLSX.writeFile(wb, `사업경비_${today}.xlsx`);
 }
 
@@ -5541,7 +5544,7 @@ function openAddCandidateModal() {
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px">
         <div class="form-group">
           <label>날짜</label>
-          <input id="ac-date" type="date" class="form-control" value="${new Date().toISOString().slice(0,10)}">
+          <input id="ac-date" type="date" class="form-control" value="${localDateStr(new Date())}">
         </div>
         <div class="form-group">
           <label>카드</label>
@@ -5585,7 +5588,7 @@ function autoFillFromSms() {
 }
 
 function doAddManualCandidate() {
-  const date     = document.getElementById('ac-date')?.value || new Date().toISOString().slice(0,10);
+  const date     = document.getElementById('ac-date')?.value || localDateStr(new Date());
   const merchant = (document.getElementById('ac-merchant')?.value || '').trim();
   const amount   = parseInt(document.getElementById('ac-amount')?.value) || 0;
   const cardType = (document.getElementById('ac-card')?.value || '').trim();
