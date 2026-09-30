@@ -2899,8 +2899,8 @@ function renderLineItems() {
         <div class="search-dropdown hidden" id="item-dd-${idx}"></div>
       </div></td>
       <td><input data-idx="${idx}" data-field="unit"      class="line-field" value="${line.unit}"      oninput="onLineChange(this)"></td>
-      <td><input data-idx="${idx}" data-field="quantity"  class="line-field" type="text" inputmode="numeric" value="${line.quantity ? Number(line.quantity).toLocaleString('ko-KR') : ''}"  style="min-width:80px" oninput="onLineNumChange(this)"></td>
-      <td><input data-idx="${idx}" data-field="unitPrice" class="line-field" type="text" inputmode="numeric" value="${line.unitPrice ? Number(line.unitPrice).toLocaleString('ko-KR') : ''}" style="min-width:100px" oninput="onLineNumChange(this)"></td>
+      <td><div style="display:flex;gap:2px;align-items:center"><input data-idx="${idx}" data-field="quantity"  class="line-field" type="text" inputmode="numeric" value="${line.quantity ? Number(line.quantity).toLocaleString('ko-KR') : ''}"  style="min-width:70px;${line.quantity < 0 ? 'color:#dc2626' : ''}" oninput="onLineNumChange(this)"><button type="button" class="btn btn-ghost btn-sm" style="padding:2px 6px" title="+/- 전환 (반품·차감)" onclick="toggleLineSign(${idx},'quantity')">±</button></div></td>
+      <td><div style="display:flex;gap:2px;align-items:center"><input data-idx="${idx}" data-field="unitPrice" class="line-field" type="text" inputmode="numeric" value="${line.unitPrice ? Number(line.unitPrice).toLocaleString('ko-KR') : ''}" style="min-width:90px;${line.unitPrice < 0 ? 'color:#dc2626' : ''}" oninput="onLineNumChange(this)"><button type="button" class="btn btn-ghost btn-sm" style="padding:2px 6px" title="+/- 전환 (할인·차감)" onclick="toggleLineSign(${idx},'unitPrice')">±</button></div></td>
       <td class="readonly-cell">${fmt(line.amount)}</td>
       <td class="readonly-cell">${fmt(line.tax)}</td>
       <td><input data-idx="${idx}" data-field="notes" class="line-field" value="${line.notes}" oninput="onLineChange(this)"></td>
@@ -3017,14 +3017,14 @@ function applyItemNameFix(idx, name) {
 }
 
 function onLineNumChange(input) {
-  fmtField(input);
+  fmtSignedField(input);
   onLineChange(input);
 }
 
 function onLineChange(input) {
   const idx   = Number(input.dataset.idx);
   const field = input.dataset.field;
-  txLineItems[idx][field] = (field==='unit'||field==='notes') ? input.value : (Number(input.value.replace(/[^0-9]/g,''))||0);
+  txLineItems[idx][field] = (field==='unit'||field==='notes') ? input.value : parseSignedNum(input.value);
   const line  = txLineItems[idx];
   line.amount = line.quantity * line.unitPrice;
   line.tax    = line.taxExempt ? 0 : Math.round(line.amount * 0.1);
@@ -3143,7 +3143,7 @@ function saveTx(cont) {
     line.amount = line.quantity * line.unitPrice;
     line.tax    = line.taxExempt ? 0 : Math.round(line.amount * 0.1);
   });
-  const validItems = txLineItems.filter(l => l.itemName || l.amount > 0);
+  const validItems = txLineItems.filter(l => l.itemName || l.amount !== 0);
   if (!validItems.length) { alert('품목을 하나 이상 입력하세요.'); return; }
 
   const warns = validateTx(date, type, vendorId, payeeName, validItems, editId);
@@ -3804,7 +3804,7 @@ function saveQuoteThen(id, type, openPDF) {
     line.amount = line.quantity * line.unitPrice;
     line.tax    = line.taxExempt ? 0 : Math.round(line.amount * 0.1);
   });
-  const validItems = txLineItems.filter(l => l.itemName || l.amount > 0);
+  const validItems = txLineItems.filter(l => l.itemName || l.amount !== 0);
   if (!validItems.length) { alert('품목을 하나 이상 입력하세요.'); return; }
 
   const data = { quoteNo, date, validUntil, vendorId, vendorName, issuer, memo, type, items: validItems };
@@ -4134,6 +4134,28 @@ function fmtField(el) {
   const formatted = digits ? Number(digits).toLocaleString('ko-KR') : '';
   el.value = formatted;
   el.selectionStart = el.selectionEnd = Math.max(0, pos + (formatted.length - oldLen));
+}
+// 부호(-) 허용 쉼표 포맷 — 반품·할인·차감 입력용. '-'만 입력된 중간 상태는 유지
+function fmtSignedField(el) {
+  const pos    = el.selectionStart;
+  const oldLen = el.value.length;
+  const neg    = el.value.trim().startsWith('-') || el.value.trim().startsWith('−');
+  const digits = el.value.replace(/[^0-9]/g, '');
+  const formatted = digits ? (neg ? '-' : '') + Number(digits).toLocaleString('ko-KR') : (neg ? '-' : '');
+  el.value = formatted;
+  el.selectionStart = el.selectionEnd = Math.max(0, pos + (formatted.length - oldLen));
+}
+function parseSignedNum(str) {
+  const s = String(str || '').trim();
+  const n = Number(s.replace(/[^0-9]/g, '')) || 0;
+  return ((s.startsWith('-') || s.startsWith('−')) ? -n : n) || 0;
+}
+function toggleLineSign(idx, field) {
+  txLineItems[idx][field] = -(txLineItems[idx][field] || 0);
+  const line = txLineItems[idx];
+  line.amount = line.quantity * line.unitPrice;
+  line.tax    = line.taxExempt ? 0 : Math.round(line.amount * 0.1);
+  renderLineItems();
 }
 function onNumInput(el) {
   fmtField(el);
