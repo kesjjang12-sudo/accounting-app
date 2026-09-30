@@ -2132,6 +2132,9 @@ function openCompanySettings() {
       <div class="form-group"><label>사업자번호</label><input id="cs-biz" class="form-control" value="${ci.businessNumber||''}" placeholder="000-00-00000"></div>
       <div class="form-group"><label>연락처</label><input id="cs-tel" class="form-control" value="${ci.tel||''}" placeholder="02-0000-0000"></div>
       <div class="form-group full"><label>주소</label><input id="cs-addr" class="form-control" value="${ci.address||''}"></div>
+      <div class="form-group"><label>업태 <span style="font-size:11px;color:var(--gray-400)">(세금계산서용)</span></label><input id="cs-btype" class="form-control" value="${ci.bizType||''}" placeholder="도소매"></div>
+      <div class="form-group"><label>종목 <span style="font-size:11px;color:var(--gray-400)">(세금계산서용)</span></label><input id="cs-bitem" class="form-control" value="${ci.bizItem||''}"></div>
+      <div class="form-group full"><label>이메일 <span style="font-size:11px;color:var(--gray-400)">(세금계산서용)</span></label><input id="cs-email" class="form-control" value="${ci.email||''}"></div>
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">취소</button>
@@ -2145,7 +2148,10 @@ function saveCompanyInfoFromModal() {
     representative: document.getElementById('cs-rep').value.trim(),
     businessNumber: document.getElementById('cs-biz').value.trim(),
     tel:            document.getElementById('cs-tel').value.trim(),
-    address:        document.getElementById('cs-addr').value.trim()
+    address:        document.getElementById('cs-addr').value.trim(),
+    bizType:        document.getElementById('cs-btype').value.trim(),
+    bizItem:        document.getElementById('cs-bitem').value.trim(),
+    email:          document.getElementById('cs-email').value.trim()
   };
   saveCompanyInfo();
   closeModal();
@@ -5667,7 +5673,10 @@ function renderHometax(el) {
         <div class="page-title">🧾 홈택스 수기 도우미</div>
         <div class="page-subtitle">월별 · 업체별 합산으로 전자세금계산서 발행 정보를 정리해드려요</div>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="openHometaxGuide()">📋 발행 가이드</button>
+      <div style="display:flex;gap:6px">
+        <button class="btn btn-primary btn-sm" onclick="openHtExportModal()">📥 일괄발급 엑셀</button>
+        <button class="btn btn-ghost btn-sm" onclick="openHometaxGuide()">📋 발행 가이드</button>
+      </div>
     </div>
     ${noBno ? `<div style="background:#fef3c7;border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px">
       ⚠ 사업자번호 미등록 거래처 매출 <b>${noBno}건</b>이 있습니다. 거래처 관리에서 사업자번호를 입력하면 발행할 수 있어요.
@@ -5842,6 +5851,373 @@ function toggleHometaxGroupIssued(txIdsStr, val) {
   });
   saveTransactions();
   renderHometax(document.getElementById('page-hometax'));
+}
+
+// ── 홈택스 엑셀 일괄발급 파일 생성 ─────────────────────────
+// 홈택스에서 내려받은 공식 '일괄작성 양식'을 읽어 헤더 위치를 찾고 그 열에 데이터를 채운다.
+// 양식은 백업 대상(acc_ 접두사)이 아니도록 ht_ 키로 브라우저에만 보관한다.
+const HT_TPL_KEY = 'ht_template_b64';
+const HT_TPL_NAME = 'ht_template_name';
+
+const HT_FIELD_LABELS = {
+  date: '작성일자', total: '합계금액', supply: '공급가액(합계)', tax: '세액(합계)', rc: '영수/청구', memo: '비고',
+  sBno: '공급자 등록번호', sSub: '공급자 종사업장번호', sName: '공급자 상호', sRep: '공급자 성명', sAddr: '공급자 주소',
+  sType: '공급자 업태', sItem: '공급자 종목', sEmail: '공급자 이메일',
+  rBno: '공급받는자 등록번호', rSub: '공급받는자 종사업장번호', rName: '공급받는자 상호', rRep: '공급받는자 성명', rAddr: '공급받는자 주소',
+  rType: '공급받는자 업태', rItem: '공급받는자 종목', rEmail: '공급받는자 이메일'
+};
+const HT_ITEM_LABELS = { idate: '일자', iname: '품목', ispec: '규격', iqty: '수량', iprice: '단가', isupply: '공급가액', itax: '세액', imemo: '품목비고' };
+const HT_REQUIRED = ['date', 'rBno', 'rName', 'supply', 'tax'];
+
+function htNorm(s) { return String(s == null ? '' : s).replace(/[\s\r\n()\[\]{}*·:：\-_/]/g, '').replace(/필수|선택/g, ''); }
+function htDigits(s) { return String(s || '').replace(/[^0-9]/g, ''); }
+
+function htScalarKey(n) {
+  const S = n.includes('공급자') && !n.includes('공급받는');
+  const R = n.includes('공급받는');
+  const side = S ? 's' : R ? 'r' : '';
+  if (n.includes('작성일')) return 'date';
+  if (side) {
+    if (n.includes('종사업장')) return side + 'Sub';
+    if (/등록번호|사업자번호|사업자등록/.test(n)) return side + 'Bno';
+    if (/상호|법인명/.test(n)) return side + 'Name';
+    if (/성명|대표/.test(n)) return side + 'Rep';
+    if (n.includes('주소')) return side + 'Addr';
+    if (n.includes('업태')) return side + 'Type';
+    if (n.includes('종목')) return side + 'Item';
+    if (/이메일|email/i.test(n)) return side + 'Email';
+    return null;
+  }
+  if (n.includes('합계금액') || n === '합계') return 'total';
+  if (n.includes('공급가액')) return 'supply';
+  if (n.includes('세액')) return 'tax';
+  if (/영수|청구/.test(n)) return 'rc';
+  if (n.includes('비고')) return 'memo';
+  return null;
+}
+
+function htItemKey(n) {
+  if (!n) return null;
+  if (n.includes('비고')) return 'imemo';
+  if (/일자|월일/.test(n) || n === '월' || n === '일') return 'idate';
+  if (n.includes('규격')) return 'ispec';
+  if (n.includes('수량')) return 'iqty';
+  if (n.includes('단가')) return 'iprice';
+  if (n.includes('공급가액')) return 'isupply';
+  if (n.includes('세액')) return 'itax';
+  if (n.includes('품목') || n.includes('품명')) return 'iname';
+  return null;
+}
+
+// 양식 시트에서 헤더 행을 찾고 열 → 필드 매핑을 만든다
+function htAnalyzeTemplate(wb) {
+  const KW = ['작성일', '등록번호', '상호', '성명', '주소', '공급가액', '세액', '합계', '품목', '수량', '단가', '비고', '이메일', '업태', '종목'];
+  let best = null;
+  wb.SheetNames.forEach(name => {
+    const ws = wb.Sheets[name];
+    if (!ws || !ws['!ref']) return;
+    const aoa = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', raw: true });
+    for (let r = 0; r < Math.min(aoa.length, 40); r++) {
+      const score = aoa[r].filter(v => { const n = htNorm(v); return n && KW.some(k => n.includes(k)); }).length;
+      if (!best || score > best.score) best = { name, ws, aoa, headerRow: r, score };
+    }
+  });
+  if (!best || best.score < 5) return null;
+
+  const { ws, aoa, headerRow: hr } = best;
+  const merges = ws['!merges'] || [];
+  const maxCol = Math.max(...aoa.slice(0, hr + 1).map(r => r.length));
+  const cellVal = (r, c) => {
+    const v = aoa[r] && aoa[r][c];
+    if (v !== '' && v != null) return String(v);
+    const m = merges.find(m => m.s.r <= r && r <= m.e.r && m.s.c <= c && c <= m.e.c);
+    if (m && (m.e.c - m.s.c) < 12 && aoa[m.s.r]) { const mv = aoa[m.s.r][m.s.c]; return mv == null ? '' : String(mv); }
+    return '';
+  };
+
+  const scalar = {}, itemsMap = { 1: {}, 2: {}, 3: {}, 4: {} }, cols = [];
+  const occur = {};
+  let itemStart = -1;
+
+  const labels = [];
+  for (let c = 0; c < maxCol; c++) {
+    const own = cellVal(hr, c);
+    const parts = [];
+    for (let r = Math.max(0, hr - 2); r <= hr; r++) {
+      const v = cellVal(r, c);
+      if (v && v !== parts[parts.length - 1] && (r === hr || v.length <= 15)) parts.push(v);
+    }
+    labels.push({ own, full: parts.join('') });
+  }
+  for (let c = 0; c < maxCol; c++) {
+    if (itemStart < 0 && htNorm(labels[c].full).includes('품목') && !htNorm(labels[c].full).includes('비고')) itemStart = c;
+  }
+
+  for (let c = 0; c < maxCol; c++) {
+    const { own, full } = labels[c];
+    const nOwn = htNorm(own), nFull = htNorm(full);
+    if (!nFull) continue;
+    let assigned = null;
+
+    if (itemStart >= 0 && c >= itemStart) {
+      const key = htItemKey(nOwn) || htItemKey(nFull);
+      if (key) {
+        const dOwn = String(own).match(/(\d)\s*$/);
+        const dFull = String(full).match(/(\d)/);
+        occur[key] = (occur[key] || 0) + 1;
+        const slot = dOwn ? Number(dOwn[1]) : dFull ? Number(dFull[1]) : occur[key];
+        if (slot >= 1 && slot <= 4 && itemsMap[slot][key] == null) {
+          itemsMap[slot][key] = c;
+          assigned = `품목${slot} ${HT_ITEM_LABELS[key]}`;
+        }
+      }
+    }
+    if (!assigned) {
+      const key = htScalarKey(nFull);
+      if (key && scalar[key] == null) { scalar[key] = c; assigned = HT_FIELD_LABELS[key]; }
+    }
+    cols.push({ c, label: nFull || nOwn, assigned });
+  }
+
+  return { ws, sheetName: best.name, aoa, headerRow: hr, scalar, items: itemsMap, cols };
+}
+
+function htExportGroups() {
+  const map = {};
+  transactions.forEach(t => {
+    if (t.type !== '매출' || t.taxInvoiceIssued) return;
+    const v = vendors.find(v => v.id === t.vendorId);
+    if (!v || !htDigits(v.businessNumber)) return;
+    const month = t.date.slice(0, 7), key = v.id + '|' + month;
+    (map[key] = map[key] || { key, vendor: v, month, txs: [] }).txs.push(t);
+  });
+  return Object.values(map).sort((a, b) => b.month.localeCompare(a.month) || a.vendor.companyName.localeCompare(b.vendor.companyName, 'ko'));
+}
+
+function htBuildInvoices(groups, o) {
+  const warns = [], out = [], t0 = today();
+  const cap = d => d > t0 ? t0 : d;
+  const specOf = i => (items.find(m => m.id === i.itemId) || {}).spec || '';
+
+  groups.forEach(g => {
+    const label = `${g.vendor.companyName} ${g.month}`;
+    const before = out.length;
+    let exemptSkipped = 0;
+    const taxableOf = t => t.items.filter(i => { const ex = i.taxExempt && !i.tax; if (ex) exemptSkipped++; return !ex; });
+
+    const push = (date, txs, lines) => {
+      const supply = lines.reduce((s, i) => s + i.supply, 0), tax = lines.reduce((s, i) => s + i.tax, 0);
+      if (!lines.length) { warns.push(`${label}: 과세 품목이 없어 제외했습니다 (면세는 전자계산서로 별도 발행).`); return; }
+      if (supply + tax <= 0) { warns.push(`${label}: 합계가 0 이하라 제외했습니다.`); return; }
+      out.push({ vendor: g.vendor, date: cap(date), lines, supply, tax, txIds: txs.map(t => t.id), label });
+    };
+
+    if (o.mode === 'month') {
+      const [y, m] = g.month.split('-').map(Number);
+      const end = localDateStr(new Date(y, m, 0));
+      let supply = 0, tax = 0;
+      g.txs.forEach(t => taxableOf(t).forEach(i => { supply += i.amount || 0; tax += i.tax || 0; }));
+      const lines = (supply || tax) ? [{ name: (o.monthName || '{월}월분 물품대').replace('{월}', m), spec: '', qty: '', price: '', supply, tax }] : [];
+      push(end, g.txs, lines);
+    } else {
+      g.txs.forEach(t => {
+        let lines = taxableOf(t).map(i => ({ name: i.itemName || '', spec: specOf(i), qty: i.quantity, price: i.unitPrice, supply: i.amount || 0, tax: i.tax || 0 }));
+        if (lines.length > 4) {
+          const rest = lines.slice(3);
+          lines = lines.slice(0, 3).concat([{ name: `${rest[0].name} 외 ${rest.length - 1}건`, spec: '', qty: '', price: '',
+            supply: rest.reduce((s, i) => s + i.supply, 0), tax: rest.reduce((s, i) => s + i.tax, 0) }]);
+          warns.push(`${label} (${t.date}): 품목이 4개를 넘어 4번째 줄에 "외 N건"으로 합쳤습니다.`);
+        }
+        push(t.date, [t], lines);
+      });
+    }
+    if (exemptSkipped && out.length > before) warns.push(`${label}: 면세 품목 ${exemptSkipped}줄은 세금계산서에서 제외했습니다 (전자계산서 별도 발행).`);
+  });
+  return { invoices: out, warns };
+}
+
+function htFillWorkbook(an, invoices, o) {
+  const ws = an.ws;
+  const range = XLSX.utils.decode_range(ws['!ref']);
+  const start0 = o.startRow ? o.startRow - 1 : an.headerRow + 1;
+  for (let r = start0; r <= range.e.r; r++)
+    for (let c = range.s.c; c <= range.e.c; c++) delete ws[XLSX.utils.encode_cell({ r, c })];
+
+  const ci = companyInfo;
+  const fmtDate = d => o.dateFmt === 'dash' ? d : d.replace(/-/g, '');
+  invoices.forEach((inv, n) => {
+    const r = start0 + n, v = inv.vendor;
+    const put = (c, val) => {
+      if (c == null || val === '' || val == null) return;
+      ws[XLSX.utils.encode_cell({ r, c })] = typeof val === 'number' ? { t: 'n', v: val } : { t: 's', v: String(val) };
+      if (c > range.e.c) range.e.c = c;
+    };
+    const S = an.scalar;
+    put(S.date, fmtDate(inv.date));
+    put(S.sBno, htDigits(ci.businessNumber)); put(S.sName, ci.name); put(S.sRep, ci.representative);
+    put(S.sAddr, ci.address); put(S.sEmail, ci.email); put(S.sType, ci.bizType); put(S.sItem, ci.bizItem);
+    put(S.rBno, htDigits(v.businessNumber)); put(S.rName, v.companyName); put(S.rRep, v.representative);
+    put(S.rAddr, v.address); put(S.rEmail, v.email); put(S.rType, v.bizType); put(S.rItem, v.bizItem);
+    put(S.total, inv.supply + inv.tax); put(S.supply, inv.supply); put(S.tax, inv.tax);
+    put(S.rc, o.rc);
+    inv.lines.slice(0, 4).forEach((ln, k) => {
+      const m = an.items[k + 1];
+      put(m.iname, ln.name); put(m.ispec, ln.spec); put(m.iqty, ln.qty === '' ? '' : Number(ln.qty));
+      put(m.iprice, ln.price === '' ? '' : Number(ln.price)); put(m.isupply, ln.supply); put(m.itax, ln.tax);
+    });
+  });
+  range.e.r = Math.max(range.e.r, start0 + invoices.length - 1);
+  ws['!ref'] = XLSX.utils.encode_range(range);
+}
+
+function htReadOptions() {
+  return {
+    mode: document.querySelector('input[name="htx-mode"]:checked')?.value || 'month',
+    dateFmt: document.getElementById('htx-datefmt')?.value || 'plain',
+    rc: document.getElementById('htx-rc')?.value || '청구',
+    monthName: document.getElementById('htx-monthname')?.value.trim() || '{월}월분 물품대',
+    startRow: parseInt(document.getElementById('htx-start')?.value, 10) || 0
+  };
+}
+
+let _htxLastIds = [];
+
+async function htLoadTemplate(input) {
+  const file = input.files[0];
+  input.value = '';
+  if (!file) return;
+  if (!xlsxCheck()) return;
+  const b64 = await new Promise((res, rej) => {
+    const rd = new FileReader();
+    rd.onload = () => res(String(rd.result).split(',')[1]);
+    rd.onerror = () => rej(new Error('파일을 읽을 수 없습니다'));
+    rd.readAsDataURL(file);
+  }).catch(e => { alert(e.message); return null; });
+  if (!b64) return;
+  let wb;
+  try { wb = XLSX.read(b64, { type: 'base64', cellStyles: true }); } catch (e) { alert('엑셀 파일이 아닙니다: ' + e.message); return; }
+  if (!htAnalyzeTemplate(wb)) { alert('헤더(작성일자·공급가액 등)를 찾지 못했습니다.\n홈택스 [일괄작성 양식 내리기]로 받은 원본 파일인지 확인하세요.'); return; }
+  try {
+    localStorage.setItem(HT_TPL_KEY, b64);
+    localStorage.setItem(HT_TPL_NAME, file.name);
+  } catch { alert('양식을 저장하지 못했습니다 (브라우저 저장 공간 부족).'); return; }
+  openHtExportModal();
+}
+
+function openHtExportModal() {
+  const groups = htExportGroups();
+  const tplName = localStorage.getItem(HT_TPL_NAME);
+  const ci = companyInfo;
+  const noBno = transactions.filter(t => t.type === '매출' && !t.taxInvoiceIssued && !htDigits((vendors.find(v => v.id === t.vendorId) || {}).businessNumber)).length;
+
+  const rows = groups.map(g => {
+    const supply = g.txs.reduce((s, t) => s + t.items.reduce((a, i) => a + (i.amount || 0), 0), 0);
+    const tax    = g.txs.reduce((s, t) => s + t.items.reduce((a, i) => a + (i.tax || 0), 0), 0);
+    return `<label style="display:flex;align-items:center;gap:8px;padding:5px 2px;border-bottom:1px solid var(--gray-100);cursor:pointer;font-size:13px">
+      <input type="checkbox" class="htx-cb" data-key="${g.key}" checked>
+      <span style="flex:1"><b>${g.vendor.companyName}</b> <span style="color:var(--gray-500)">${g.month} · ${g.txs.length}건</span></span>
+      <span style="color:var(--gray-600)">${fmt(supply + tax)}원</span>
+    </label>`;
+  }).join('') || `<div class="empty-state" style="padding:16px"><p>발행할 미발행 매출이 없습니다</p></div>`;
+
+  openModal('📥 홈택스 일괄발급 엑셀 만들기', `
+    ${!htDigits(ci.businessNumber) ? `<div style="background:#fef3c7;border-radius:8px;padding:8px 12px;margin-bottom:10px;font-size:12.5px">⚠ 내 회사 사업자번호가 없습니다. 홈 → ⚙ 내 회사 정보에서 입력하세요.</div>` : ''}
+    <div style="background:var(--gray-50);border-radius:8px;padding:10px 12px;margin-bottom:12px;font-size:12.5px">
+      <b>① 홈택스 양식</b> — 홈택스 → 전자(세금)계산서 발급 → 일괄발급 → <b>[일괄작성 양식 내리기]</b>로 받은 파일을 한 번만 올려두세요.<br>
+      ${tplName ? `<span style="color:var(--success)">✓ 저장된 양식: ${tplName}</span>` : '<span style="color:var(--danger)">아직 양식이 없습니다</span>'}
+      <label class="btn btn-ghost btn-sm" style="cursor:pointer;margin-left:8px">${tplName ? '양식 교체' : '양식 올리기'}
+        <input type="file" accept=".xlsx,.xls" style="display:none" onchange="htLoadTemplate(this)"></label>
+    </div>
+    <div style="font-size:13px;font-weight:700;margin-bottom:6px">② 발행 방식</div>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:10px;font-size:13px">
+      <label style="cursor:pointer"><input type="radio" name="htx-mode" value="month" checked> 월합계 (업체·월별 1장)</label>
+      <label style="cursor:pointer"><input type="radio" name="htx-mode" value="tx"> 건별 (거래 1건 = 1장, 품목 최대 4줄)</label>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(170px,1fr));gap:8px;margin-bottom:12px">
+      <div class="form-group"><label>월합계 품목명</label><input id="htx-monthname" class="form-control" value="{월}월분 물품대"></div>
+      <div class="form-group"><label>날짜 형식</label><select id="htx-datefmt" class="form-control"><option value="plain">20260930</option><option value="dash">2026-09-30</option></select></div>
+      <div class="form-group"><label>영수/청구</label><select id="htx-rc" class="form-control"><option>청구</option><option>영수</option></select></div>
+      <div class="form-group"><label>데이터 시작 행 (비우면 자동)</label><input id="htx-start" class="form-control" type="text" inputmode="numeric" placeholder="자동"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px">
+      <span style="font-size:13px;font-weight:700">③ 발행할 대상 <span style="font-weight:400;color:var(--gray-500)">(미발행 매출 · 사업자번호 있는 거래처)</span></span>
+      <label style="font-size:12px;cursor:pointer"><input type="checkbox" checked onchange="document.querySelectorAll('.htx-cb').forEach(c=>c.checked=this.checked)"> 전체</label>
+    </div>
+    ${noBno ? `<div style="font-size:11.5px;color:#92400e;margin-bottom:4px">사업자번호가 없는 거래처 매출 ${noBno}건은 목록에서 제외됐습니다.</div>` : ''}
+    <div style="max-height:220px;overflow-y:auto;border:1px solid var(--gray-200);border-radius:8px;padding:2px 10px;margin-bottom:12px">${rows}</div>
+    <div id="htx-preview"></div>
+    <div id="htx-after"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">닫기</button>
+      <button class="btn btn-ghost" onclick="htRun(false)">🔍 양식 분석 · 미리보기</button>
+      <button class="btn btn-primary" onclick="htRun(true)">📥 엑셀 다운로드</button>
+    </div>`, true);
+}
+
+function htRun(download) {
+  if (!xlsxCheck()) return;
+  const b64 = localStorage.getItem(HT_TPL_KEY);
+  if (!b64) { alert('먼저 홈택스 양식 파일을 올려주세요.'); return; }
+  if (download && !htDigits(companyInfo.businessNumber)) { alert('내 회사 사업자번호가 없습니다. 홈 → 내 회사 정보에서 입력하세요.'); return; }
+
+  const keys = new Set([...document.querySelectorAll('.htx-cb:checked')].map(c => c.dataset.key));
+  const groups = htExportGroups().filter(g => keys.has(g.key));
+  if (!groups.length) { alert('발행할 대상을 선택하세요.'); return; }
+
+  let wb;
+  try { wb = XLSX.read(b64, { type: 'base64', cellStyles: true }); } catch (e) { alert('양식을 읽을 수 없습니다: ' + e.message); return; }
+  const an = htAnalyzeTemplate(wb);
+  if (!an) { alert('저장된 양식에서 헤더를 찾지 못했습니다. 양식을 다시 올려주세요.'); return; }
+
+  const o = htReadOptions();
+  const { invoices, warns } = htBuildInvoices(groups, o);
+  const missing = HT_REQUIRED.filter(k => an.scalar[k] == null);
+  const startRow = o.startRow || an.headerRow + 2;
+  const under = (an.aoa[startRow - 1] || []).filter(v => v !== '' && v != null).slice(0, 6).join(' | ');
+
+  const mappedRows = an.cols.map(c => `<tr><td style="font-size:11px;color:var(--gray-500)">${XLSX.utils.encode_col(c.c)}</td>
+    <td style="font-size:12px">${c.label}</td>
+    <td style="font-size:12px;color:${c.assigned ? 'var(--success)' : 'var(--gray-400)'}">${c.assigned || '비워둠'}</td></tr>`).join('');
+
+  const invRows = invoices.slice(0, 5).map(i => `<tr><td>${i.label}</td><td>${i.date}</td>
+    <td style="text-align:right">${fmt(i.supply)}</td><td style="text-align:right">${fmt(i.tax)}</td>
+    <td>${i.lines.map(l => l.name).join(', ')}</td></tr>`).join('');
+
+  document.getElementById('htx-preview').innerHTML = `
+    <div style="border:1px solid var(--gray-200);border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px">
+      <div style="margin-bottom:6px"><b>양식 분석</b> — 헤더 ${an.headerRow + 1}행 · 데이터는 <b>${startRow}행</b>부터 입력 · 세금계산서 <b>${invoices.length}장</b>
+        ${invoices.length > 50 ? '<span style="color:#b45309"> · 한 파일 발급 한도(50건 전후)를 넘을 수 있으니 나눠서 만드세요</span>' : ''}</div>
+      ${missing.length ? `<div style="color:var(--danger);margin-bottom:6px">⚠ 양식에서 못 찾은 필수 항목: ${missing.map(k => HT_FIELD_LABELS[k]).join(', ')}</div>` : ''}
+      ${under ? `<div style="color:var(--gray-500);margin-bottom:6px">헤더 바로 아래 줄 내용: <i>${under}</i> — 예시·안내 문구면 '데이터 시작 행'을 아래로 조정하세요 (이 줄부터 덮어씁니다).</div>` : ''}
+      ${warns.length ? `<div style="color:#92400e;margin-bottom:6px">${warns.map(w => '• ' + w).join('<br>')}</div>` : ''}
+      <details><summary style="cursor:pointer;color:var(--gray-600)">열 매핑 보기 (${an.cols.filter(c => c.assigned).length}/${an.cols.length}열 채움)</summary>
+        <div class="table-wrapper" style="max-height:180px;overflow-y:auto;margin-top:6px"><table><thead><tr><th>열</th><th>양식 항목</th><th>채우는 값</th></tr></thead><tbody>${mappedRows}</tbody></table></div>
+      </details>
+      ${invRows ? `<div class="table-wrapper" style="margin-top:8px"><table><thead><tr><th>대상</th><th>작성일자</th><th style="text-align:right">공급가액</th><th style="text-align:right">세액</th><th>품목</th></tr></thead><tbody>${invRows}</tbody></table></div>` : ''}
+    </div>`;
+
+  if (!download) return;
+  if (!invoices.length) { alert('발행 가능한 세금계산서가 없습니다.'); return; }
+  if (missing.length && !confirm(`양식에서 못 찾은 필수 항목이 있습니다:\n${missing.map(k => HT_FIELD_LABELS[k]).join(', ')}\n\n그대로 다운로드할까요?`)) return;
+
+  htFillWorkbook(an, invoices, o);
+  const ext = /\.xls$/i.test(localStorage.getItem(HT_TPL_NAME) || '') ? 'xls' : 'xlsx';
+  XLSX.writeFile(wb, `홈택스일괄발급_${today().replace(/-/g, '')}.${ext}`);
+
+  _htxLastIds = [...new Set(invoices.flatMap(i => i.txIds))];
+  document.getElementById('htx-after').innerHTML = `
+    <div style="background:#f0fdf4;border-radius:8px;padding:10px 12px;margin-bottom:10px;font-size:12.5px">
+      ✓ 다운로드했습니다. 홈택스에 업로드해 <b>발급까지 마친 뒤</b> 아래 버튼으로 발행완료 표시하세요.
+      <button class="btn btn-success btn-sm" style="margin-left:8px" onclick="htMarkExported()">✓ 이 ${_htxLastIds.length}건 발행완료 표시</button>
+    </div>`;
+}
+
+function htMarkExported() {
+  if (!_htxLastIds.length) return;
+  if (!confirm(`${_htxLastIds.length}건을 발행완료로 표시할까요?\n(홈택스에서 실제 발급을 마친 경우에만 누르세요)`)) return;
+  toggleHometaxGroupIssued(_htxLastIds.join(','), true);
+  _htxLastIds = [];
+  closeModal();
 }
 
 function openHometaxGuide() {
