@@ -858,6 +858,462 @@ function render(page) {
   if (page === 'tax')          renderTaxPage(el);
   if (page === 'candidates')   renderCandidatesPage(el);
   if (page === 'hometax')      renderHometax(el);
+  if (page === 'docs')         renderDocs(el);
+}
+
+// ── 서류 작성 (물품공급계약서 · 검수보고서) ────────────────
+let docTpl    = 'contract';
+let docRows   = [];
+let docStates = {};
+
+const DOC_TPLS = {
+  contract:   { label: '📝 물품공급계약서' },
+  inspection: { label: '✅ 검수보고서' }
+};
+const DOC_FIELDS = {
+  contract:   ['title','date','delivDate','delivPlace','freight','vatMode','payMethod','payTerm','account','inspDays','warrantyMonths','lateRate','period','court','special'],
+  inspection: ['no','poNo','title','date','delivDate','place','inspector','inspectorRank','witness','witnessRank','judge','opinion','action']
+};
+const DOC_CHECK_ITEMS = ['수량 확인', '규격·사양 일치', '외관 상태', '포장 상태', '성능·작동 상태'];
+const PARTY_KEYS = [['name','상호'],['rep','대표자'],['bno','사업자번호'],['addr','주소'],['tel','연락처']];
+
+function docEsc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function docNl(s)  { return docEsc(s).replace(/\n/g, '<br>'); }
+function docNum(s) { return Number(String(s || '').replace(/[^0-9]/g, '')) || 0; }
+function docFmtN(n) { return n ? Number(n).toLocaleString('ko-KR') : ''; }
+function docBlank(s, w = 8) { return s ? `<b>${docEsc(s)}</b>` : `<span class="blank">${'&nbsp;'.repeat(w * 2)}</span>`; }
+
+function numToKorean(n) {
+  n = Math.round(Math.abs(Number(n) || 0));
+  if (!n) return '영';
+  const dg = ['', '일', '이', '삼', '사', '오', '육', '칠', '팔', '구'];
+  const sm = ['', '십', '백', '천'];
+  const bg = ['', '만', '억', '조'];
+  const parts = [];
+  let u = 0;
+  while (n > 0) {
+    let g = n % 10000, s = '';
+    for (let i = 3; i >= 0; i--) {
+      const d = Math.floor(g / Math.pow(10, i)) % 10;
+      if (d) s += dg[d] + sm[i];
+    }
+    if (s) parts.unshift(s + bg[u]);
+    n = Math.floor(n / 10000);
+    u++;
+  }
+  return parts.join('');
+}
+
+function docDefaults(tpl) {
+  const ci = companyInfo || {};
+  const me = { name: ci.name || '', rep: ci.representative || '', bno: ci.businessNumber || '', addr: ci.address || '', tel: ci.tel || '' };
+  const ot = { name: '', rep: '', bno: '', addr: '', tel: '' };
+  if (tpl === 'contract') return {
+    role: 'supplier', vendorId: '', me, ot, rows: [{ name: '', spec: '', unit: '', qty: '', price: '' }],
+    f: { title: '', date: today(), delivDate: '', delivPlace: '', freight: '공급자', vatMode: '별도', payMethod: '계좌이체',
+         payTerm: '검수 합격 후 30일 이내', account: '', inspDays: '7', warrantyMonths: '12', lateRate: '0.1', period: '', court: '', special: '' }
+  };
+  return {
+    role: 'buyer', vendorId: '', me, ot, rows: [{ name: '', spec: '', unit: '', ord: '', del: '', pass: '', rej: '', note: '' }],
+    checks: DOC_CHECK_ITEMS.map(i => ({ item: i, res: '적합', note: '' })),
+    f: { no: '', poNo: '', title: '', date: today(), delivDate: '', place: '', inspector: '', inspectorRank: '', witness: '', witnessRank: '', judge: '합격', opinion: '', action: '' }
+  };
+}
+
+function docLoadState(tpl) {
+  if (docStates[tpl]) return docStates[tpl];
+  const base = docDefaults(tpl);
+  const saved = DB.load('acc_doc_draft_' + tpl, '{}');
+  if (saved && saved.f) {
+    base.role = saved.role || base.role;
+    base.vendorId = saved.vendorId || '';
+    base.ot = { ...base.ot, ...(saved.ot || {}) };
+    base.me = { ...base.me, ...Object.fromEntries(Object.entries(saved.me || {}).filter(([, v]) => v)) };
+    base.f = { ...base.f, ...saved.f, date: today() };
+    if (saved.rows && saved.rows.length) base.rows = saved.rows;
+    if (saved.checks && saved.checks.length) base.checks = saved.checks;
+  }
+  docStates[tpl] = base;
+  return base;
+}
+
+function docCollect() {
+  const st = docLoadState(docTpl);
+  const g = id => document.getElementById(id)?.value ?? '';
+  const d = { role: document.querySelector('input[name="doc-role"]:checked')?.value || st.role, vendorId: g('doc-vendor'),
+              me: {}, ot: {}, f: {}, rows: docRows.map(r => ({ ...r })) };
+  PARTY_KEYS.forEach(([k]) => { d.me[k] = g('doc-me-' + k).trim(); d.ot[k] = g('doc-ot-' + k).trim(); });
+  DOC_FIELDS[docTpl].forEach(k => { d.f[k] = g('doc-f-' + k).trim(); });
+  if (docTpl === 'inspection') d.checks = DOC_CHECK_ITEMS.map((item, i) => ({ item, res: g('doc-chk-res-' + i), note: g('doc-chk-note-' + i).trim() }));
+  return d;
+}
+
+function docSwitchTpl(tpl) {
+  if (document.getElementById('doc-form')) docStates[docTpl] = docCollect();
+  docTpl = tpl;
+  renderDocs(document.getElementById('page-docs'));
+}
+
+function renderDocs(el) {
+  const st = docLoadState(docTpl);
+  docRows = st.rows.map(r => ({ ...r }));
+  const f = st.f;
+  const inp  = (id, label, val, ph, cls) => `<div class="form-group ${cls || ''}"><label>${label}</label><input id="${id}" class="form-control" value="${docEsc(val)}" placeholder="${docEsc(ph || '')}"></div>`;
+  const sel  = (id, label, val, opts) => `<div class="form-group"><label>${label}</label><select id="${id}" class="form-control">${opts.map(o => `<option ${o === val ? 'selected' : ''}>${o}</option>`).join('')}</select></div>`;
+  const area = (id, label, val, ph) => `<div class="form-group full"><label>${label}</label><textarea id="${id}" class="form-control" rows="3" placeholder="${docEsc(ph || '')}">${docEsc(val)}</textarea></div>`;
+  const party = (pfx, title, p) => `<div class="card" style="margin-bottom:12px"><div class="card-title" style="margin-bottom:8px">${title}</div>
+    <div class="form-grid">${PARTY_KEYS.map(([k, l]) => inp(`doc-${pfx}-${k}`, l, p[k], '', k === 'addr' ? 'full' : '')).join('')}</div></div>`;
+
+  const tabs = Object.entries(DOC_TPLS).map(([k, v]) => `<button class="period-btn ${docTpl === k ? 'active' : ''}" onclick="docSwitchTpl('${k}')">${v.label}</button>`).join('');
+  const vOpts = vendors.map(v => `<option value="${v.id}" ${st.vendorId === v.id ? 'selected' : ''}>${docEsc(v.companyName)}</option>`).join('');
+
+  const roleLabels = docTpl === 'contract'
+    ? [['supplier', '내가 공급자 (을)'], ['buyer', '내가 공급받는자 (갑)']]
+    : [['buyer', '내가 발주처 (검수하는 쪽)'], ['supplier', '내가 납품업체']];
+  const roleHtml = `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:13px"><b>내 입장</b>
+    ${roleLabels.map(([v, l]) => `<label style="cursor:pointer"><input type="radio" name="doc-role" value="${v}" ${st.role === v ? 'checked' : ''}> ${l}</label>`).join('')}</div>`;
+
+  let fields = '';
+  if (docTpl === 'contract') {
+    fields = `<div class="form-grid">
+      ${inp('doc-f-title', '계약명', f.title, '예: ○○ 자재 공급 계약', 'full')}
+      ${inp('doc-f-date', '계약일', f.date)}
+      ${inp('doc-f-period', '계약기간 (선택)', f.period, '예: 2026-10-15 ~ 2027-10-14')}
+      ${inp('doc-f-delivDate', '납품기한', f.delivDate, '예: 2026년 11월 15일 / 계약일로부터 14일 이내')}
+      ${inp('doc-f-delivPlace', '납품장소', f.delivPlace, '예: 갑의 ○○공장')}
+      ${sel('doc-f-freight', '운송비·하역비 부담', f.freight, ['공급자', '공급받는자'])}
+      ${sel('doc-f-vatMode', '부가가치세', f.vatMode, ['별도', '포함'])}
+      ${sel('doc-f-payMethod', '대금 지급방법', f.payMethod, ['계좌이체', '현금', '어음', '기타'])}
+      ${inp('doc-f-payTerm', '대금 지급시기', f.payTerm, '예: 검수 합격 후 30일 이내')}
+      ${inp('doc-f-account', '입금계좌 (을)', f.account, '예: ○○은행 000-0000-0000 (예금주)', 'full')}
+      ${inp('doc-f-inspDays', '검수기간 (일)', f.inspDays)}
+      ${inp('doc-f-warrantyMonths', '품질보증기간 (개월)', f.warrantyMonths)}
+      ${inp('doc-f-lateRate', '지체상금률 (1일당 %)', f.lateRate)}
+      ${inp('doc-f-court', '관할법원', f.court, '예: 서울중앙지방법원')}
+      ${area('doc-f-special', '특약사항', f.special, '추가로 합의한 내용을 줄바꿈으로 입력 (없으면 비워두세요)')}
+    </div>`;
+  } else {
+    fields = `<div class="form-grid">
+      ${inp('doc-f-title', '건명 (계약명·품명)', f.title, '예: ○○ 자재 납품', 'full')}
+      ${inp('doc-f-no', '검수보고서 번호', f.no, '예: INS-2026-001')}
+      ${inp('doc-f-poNo', '발주·계약번호', f.poNo)}
+      ${inp('doc-f-date', '검수일자', f.date)}
+      ${inp('doc-f-delivDate', '납품일자', f.delivDate)}
+      ${inp('doc-f-place', '검수장소', f.place)}
+      ${inp('doc-f-inspector', '검수자 성명', f.inspector)}
+      ${inp('doc-f-inspectorRank', '검수자 직책', f.inspectorRank)}
+      ${inp('doc-f-witness', '입회자 성명', f.witness)}
+      ${inp('doc-f-witnessRank', '입회자 직책', f.witnessRank)}
+    </div>
+    <div class="card" style="margin:12px 0"><div class="card-title" style="margin-bottom:8px">검사 항목</div>
+      <div class="table-wrapper"><table><thead><tr><th>항목</th><th style="width:120px">결과</th><th>비고</th></tr></thead><tbody>
+      ${st.checks.map((c, i) => `<tr><td>${c.item}</td>
+        <td><select id="doc-chk-res-${i}" class="form-control">${['적합', '부적합', '해당없음'].map(o => `<option ${o === c.res ? 'selected' : ''}>${o}</option>`).join('')}</select></td>
+        <td><input id="doc-chk-note-${i}" class="form-control" value="${docEsc(c.note)}"></td></tr>`).join('')}
+      </tbody></table></div></div>
+    <div class="form-grid">
+      ${sel('doc-f-judge', '종합 판정', f.judge, ['합격', '조건부 합격', '불합격'])}
+      ${area('doc-f-opinion', '검수 의견', f.opinion, '불량·부족 내용, 특이사항 등')}
+      ${area('doc-f-action', '후속 조치', f.action, '예: 불량품 3개 교환 요청, 부족분 10월 20일까지 추가 납품')}
+    </div>`;
+  }
+
+  el.innerHTML = `
+    <div class="page-header"><div>
+      <div class="page-title">📄 서류 작성</div>
+      <div class="page-subtitle">양식을 고르고 빈칸을 채운 뒤 <b>생성하기</b>를 누르면 인쇄·PDF·Word용 문서가 만들어집니다</div>
+    </div></div>
+    <div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap">${tabs}</div>
+    <div id="doc-form">
+      ${roleHtml}
+      <div class="card" style="margin-bottom:12px">
+        <div class="card-title" style="margin-bottom:8px">상대방 거래처 · 거래 불러오기 <span style="font-size:11px;font-weight:400;color:var(--gray-400)">(선택 — 안 쓰고 직접 입력해도 됩니다)</span></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <select id="doc-vendor" class="form-control" style="flex:1;min-width:200px" onchange="docPickVendor()"><option value="">거래처 선택 (또는 아래 직접 입력)</option>${vOpts}</select>
+          <select id="doc-tx" class="form-control" style="flex:1;min-width:240px" onchange="docPickTx()"></select>
+        </div>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:12px">
+        ${party('me', '내 회사', st.me)}
+        ${party('ot', '상대방', st.ot)}
+      </div>
+      ${fields}
+      <div class="card" style="margin:12px 0"><div class="card-title" style="margin-bottom:8px">${docTpl === 'contract' ? '공급물품 내역' : '검수 품목'}</div>
+        <div id="doc-rows"></div>
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="docAddRow()">+ 품목 추가</button>
+      </div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-primary" onclick="docGenerate()">📄 생성하기</button>
+        <button class="btn btn-ghost" onclick="docReset()">↺ 초기화</button>
+      </div>
+      <div style="font-size:11px;color:var(--gray-400);margin-top:10px">${docTpl === 'contract' ? '※ 일반적인 물품공급계약 양식입니다. 금액이 크거나 특수한 계약은 서명 전에 전문가(법무사·변호사) 검토를 받으세요.' : '※ 수량 불일치 품목은 문서에 자동으로 표시됩니다.'}</div>
+    </div>`;
+  docRenderTxOptions();
+  docRenderRows();
+}
+
+function docRenderTxOptions() {
+  const sel = document.getElementById('doc-tx');
+  if (!sel) return;
+  const vid = document.getElementById('doc-vendor')?.value || '';
+  const list = transactions.filter(t => !vid || t.vendorId === vid).sort((a, b) => b.date.localeCompare(a.date)).slice(0, 40);
+  sel.innerHTML = `<option value="">거래내역에서 품목 불러오기</option>` + list.map(t => {
+    const v = vendors.find(v => v.id === t.vendorId);
+    const total = t.items.reduce((s, i) => s + (i.amount || 0) + (i.tax || 0), 0);
+    return `<option value="${t.id}">${t.date} · ${docEsc(v ? v.companyName : (t.payeeName || '-'))} · ${t.type} · ${fmt(total)}원</option>`;
+  }).join('');
+}
+
+function docPickVendor() {
+  const v = vendors.find(v => v.id === document.getElementById('doc-vendor').value);
+  if (v) {
+    const set = (k, val) => { const el = document.getElementById('doc-ot-' + k); if (el) el.value = val || ''; };
+    set('name', v.companyName); set('rep', v.representative); set('bno', v.businessNumber); set('addr', v.address); set('tel', v.tel || v.phone || '');
+  }
+  docRenderTxOptions();
+}
+
+function docPickTx() {
+  const t = transactions.find(t => t.id === document.getElementById('doc-tx').value);
+  if (!t) return;
+  const vs = document.getElementById('doc-vendor');
+  if (t.vendorId && !vs.value) { vs.value = t.vendorId; docPickVendor(); document.getElementById('doc-tx').value = t.id; }
+  docRows = t.items.map(i => {
+    const m = items.find(x => x.id === i.itemId) || {};
+    const q = docFmtN(i.quantity);
+    return docTpl === 'contract'
+      ? { name: i.itemName || '', spec: m.spec || '', unit: i.unit || '', qty: q, price: docFmtN(i.unitPrice) }
+      : { name: i.itemName || '', spec: m.spec || '', unit: i.unit || '', ord: q, del: q, pass: q, rej: '', note: '' };
+  });
+  docRenderRows();
+}
+
+function docAddRow() {
+  docRows.push(docTpl === 'contract' ? { name: '', spec: '', unit: '', qty: '', price: '' } : { name: '', spec: '', unit: '', ord: '', del: '', pass: '', rej: '', note: '' });
+  docRenderRows();
+}
+function docDelRow(i) {
+  docRows.splice(i, 1);
+  if (!docRows.length) docAddRow(); else docRenderRows();
+}
+
+function docRowEdit(i, k, el) {
+  if (['qty', 'price', 'ord', 'del', 'pass'].includes(k)) fmtField(el);
+  docRows[i][k] = el.value;
+  const tr = el.closest('tr');
+  if (docTpl === 'contract') {
+    const c = tr.querySelector('.doc-amt');
+    if (c) c.textContent = docFmtN(docNum(docRows[i].qty) * docNum(docRows[i].price));
+  } else if (k === 'del' || k === 'pass') {
+    const r = docRows[i];
+    const rej = Math.max(0, docNum(r.del) - docNum(r.pass));
+    r.rej = rej ? String(rej) : '';
+    const c = tr.querySelector('.doc-rej');
+    if (c) c.textContent = r.rej || '0';
+  }
+}
+
+function docRenderRows() {
+  const box = document.getElementById('doc-rows');
+  if (!box) return;
+  const ti = (i, k, ph, w) => `<input class="form-control" style="min-width:${w}px" placeholder="${ph}" value="${docEsc(docRows[i][k])}" oninput="docRowEdit(${i},'${k}',this)">`;
+  const ni = (i, k, w) => `<input class="form-control" type="text" inputmode="numeric" style="min-width:${w}px;text-align:right" value="${docEsc(docRows[i][k])}" oninput="docRowEdit(${i},'${k}',this)">`;
+  const del = i => `<td style="text-align:center"><button class="btn btn-danger btn-sm" onclick="docDelRow(${i})">✕</button></td>`;
+  let head, body;
+  if (docTpl === 'contract') {
+    head = '<th>품명</th><th>규격</th><th style="width:70px">단위</th><th style="width:90px">수량</th><th style="width:110px">단가</th><th style="width:110px;text-align:right">금액</th><th style="width:40px"></th>';
+    body = docRows.map((r, i) => `<tr><td>${ti(i, 'name', '품명', 140)}</td><td>${ti(i, 'spec', '규격', 100)}</td><td>${ti(i, 'unit', 'EA', 50)}</td>
+      <td>${ni(i, 'qty', 70)}</td><td>${ni(i, 'price', 90)}</td><td class="doc-amt" style="text-align:right">${docFmtN(docNum(r.qty) * docNum(r.price))}</td>${del(i)}</tr>`).join('');
+  } else {
+    head = '<th>품명</th><th>규격</th><th style="width:70px">단위</th><th style="width:90px">발주수량</th><th style="width:90px">납품수량</th><th style="width:90px">합격수량</th><th style="width:80px;text-align:right">불합격</th><th>비고</th><th style="width:40px"></th>';
+    body = docRows.map((r, i) => `<tr><td>${ti(i, 'name', '품명', 130)}</td><td>${ti(i, 'spec', '규격', 90)}</td><td>${ti(i, 'unit', 'EA', 50)}</td>
+      <td>${ni(i, 'ord', 70)}</td><td>${ni(i, 'del', 70)}</td><td>${ni(i, 'pass', 70)}</td><td class="doc-rej" style="text-align:right">${r.rej || '0'}</td>
+      <td>${ti(i, 'note', '비고', 100)}</td>${del(i)}</tr>`).join('');
+  }
+  box.innerHTML = `<div class="table-wrapper" style="overflow-x:auto"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+}
+
+function docReset() {
+  if (!confirm('입력한 내용을 모두 지우고 처음 상태로 되돌릴까요?')) return;
+  delete docStates[docTpl];
+  DB.save('acc_doc_draft_' + docTpl, {});
+  renderDocs(document.getElementById('page-docs'));
+}
+
+function docGenerate() {
+  const d = docCollect();
+  docStates[docTpl] = d;
+  DB.save('acc_doc_draft_' + docTpl, d);
+  const other = d.ot.name || '상대방';
+  if (docTpl === 'contract') {
+    openDocWindow(`물품공급계약서_${other}_${d.f.date}`, docContractHtml(d));
+  } else {
+    openDocWindow(`검수보고서_${other}_${d.f.date}`, docInspectionHtml(d));
+  }
+}
+
+function docDateKo(s) {
+  const m = String(s || '').match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return m ? `${m[1]}년 ${Number(m[2])}월 ${Number(m[3])}일` : docBlank('', 4);
+}
+
+function docContractHtml(d) {
+  const f = d.f;
+  const gap  = d.role === 'supplier' ? d.ot : d.me;
+  const eul  = d.role === 'supplier' ? d.me : d.ot;
+  const rows = d.rows.filter(r => r.name || docNum(r.price));
+  const supply = rows.reduce((s, r) => s + docNum(r.qty) * docNum(r.price), 0);
+  const vat    = f.vatMode === '별도' ? Math.round(supply * 0.1) : 0;
+  const total  = supply + vat;
+
+  const itemRows = rows.map((r, i) => `<tr><td>${i + 1}</td><td class="l">${docEsc(r.name)}</td><td>${docEsc(r.spec)}</td><td>${docEsc(r.unit)}</td>
+    <td class="r">${docEsc(r.qty)}</td><td class="r">${docEsc(r.price)}</td><td class="r">${fmt(docNum(r.qty) * docNum(r.price))}</td></tr>`).join('')
+    || `<tr><td>1</td><td class="l">&nbsp;</td><td></td><td></td><td></td><td></td><td></td></tr>`;
+  const sumRows = f.vatMode === '별도'
+    ? `<tr class="sum"><td colspan="6">공급가액 합계</td><td class="r">${supply ? fmt(supply) : ''}</td></tr>
+       <tr class="sum"><td colspan="6">부가가치세 (10%)</td><td class="r">${supply ? fmt(vat) : ''}</td></tr>
+       <tr class="sum"><td colspan="6">합 계</td><td class="r">${supply ? fmt(total) : ''}</td></tr>`
+    : `<tr class="sum"><td colspan="6">합계 (부가가치세 포함)</td><td class="r">${supply ? fmt(supply) : ''}</td></tr>`;
+  const itemTable = `<table class="grid"><thead><tr><th style="width:30px">No</th><th>품명</th><th>규격</th><th style="width:44px">단위</th><th style="width:60px">수량</th><th style="width:84px">단가</th><th style="width:96px">금액</th></tr></thead><tbody>${itemRows}${sumRows}</tbody></table>`;
+
+  const amountText = supply
+    ? `금 <b>${numToKorean(supply)}원정(₩${fmt(supply)})</b> (부가가치세 ${f.vatMode})`
+    : `금 ${docBlank('', 6)}원정(₩${docBlank('', 5)}) (부가가치세 ${f.vatMode})`;
+  const freightTxt = f.freight === '공급받는자' ? '갑' : '을';
+
+  const A = [];
+  A.push(['목적', ['본 계약은 갑이 을로부터 물품을 공급받음에 있어 필요한 제반 사항을 정함을 목적으로 한다.']]);
+  A.push(['공급물품', ['을이 갑에게 공급할 물품의 품명, 규격, 수량 및 단가는 아래와 같다.', itemTable]]);
+  A.push(['계약금액', [`계약금액은 ${amountText}으로 한다.`]]);
+  if (f.period) A.push(['계약기간', [`계약기간은 <b>${docEsc(f.period)}</b>으로 한다.`]]);
+  A.push(['납품', [
+    `① 을은 ${docBlank(f.delivDate, 7)}까지 ${docBlank(f.delivPlace, 7)}에 물품을 납품하여야 한다.`,
+    `② 물품의 운송비 및 하역비는 ${freightTxt}이 부담한다.`,
+    '③ 을은 납품 시 거래명세서를 함께 교부하여야 한다.']]);
+  A.push(['검수', [
+    `① 갑은 물품을 인수한 날부터 ${docBlank(f.inspDays, 2)}일 이내에 수량, 규격 및 품질을 검수하고 그 결과를 을에게 통지하여야 한다.`,
+    '② 갑이 전항의 기간 내에 이의를 제기하지 아니한 때에는 검수에 합격한 것으로 본다.',
+    '③ 검수 결과 불합격된 물품은 을이 지체 없이 자신의 비용으로 교환 또는 재납품하여야 한다.']]);
+  A.push(['대금지급', [
+    `① 갑은 ${docBlank(f.payTerm, 10)}에 ${docBlank(f.payMethod, 3)} 방식으로 대금을 지급한다.`,
+    `② 입금계좌: ${docBlank(f.account, 14)}`,
+    '③ 을은 대금 청구 시 관련 법령에 따른 세금계산서를 발행하여 갑에게 교부한다.']]);
+  A.push(['소유권 및 위험부담', ['물품의 소유권 및 멸실·훼손에 대한 위험은 갑이 물품을 인수한 때 갑에게 이전한다. 다만, 인수 전 발생한 위험은 을이 부담한다.']]);
+  A.push(['품질보증', [`을은 물품 인도일로부터 ${docBlank(f.warrantyMonths, 2)}개월 이내에 을의 책임 있는 사유로 하자가 발생한 경우 무상으로 교환 또는 수리하여야 한다.`]]);
+  A.push(['지체상금', [`을이 정당한 사유 없이 납품기한을 지키지 못한 경우 지체일수 1일당 계약금액의 ${docBlank(f.lateRate, 2)}%에 해당하는 지체상금을 갑에게 지급하여야 한다. 다만, 천재지변 등 불가항력 또는 갑의 귀책사유로 인한 지체는 제외한다.`]]);
+  A.push(['계약의 해제·해지', [
+    '① 일방 당사자가 본 계약을 위반하고 상대방이 상당한 기간(7일 이상)을 정하여 시정을 최고하였음에도 이를 시정하지 아니한 때에는 상대방은 계약을 해제 또는 해지할 수 있다.',
+    '② 전항의 해제·해지는 손해배상의 청구에 영향을 미치지 아니한다.']]);
+  A.push(['비밀유지', ['양 당사자는 본 계약의 체결 및 이행 과정에서 알게 된 상대방의 영업상·기술상 비밀을 제3자에게 누설하거나 본 계약 이외의 목적으로 사용하여서는 아니 된다.']]);
+  A.push(['권리·의무의 양도금지', ['양 당사자는 상대방의 사전 서면 동의 없이 본 계약상의 지위 또는 권리·의무를 제3자에게 양도하거나 담보로 제공할 수 없다.']]);
+  A.push(['분쟁해결', [`본 계약과 관련하여 분쟁이 발생한 경우 양 당사자는 우선 협의하여 해결하되, 협의가 이루어지지 아니할 때에는 ${docBlank(f.court, 7)}을 제1심 관할법원으로 한다.`]]);
+  if (f.special) A.push(['특약사항', [docNl(f.special)]]);
+  A.push(['기타', ['본 계약에 정하지 아니한 사항은 관계 법령 및 상관례에 따른다.']]);
+
+  const articles = A.map(([t, ps], i) => `<div class="art"><div class="at">제${i + 1}조 (${t})</div>${ps.map(p => p.startsWith('<table') ? p : `<p>${p}</p>`).join('')}</div>`).join('');
+  const party = (p, label) => `<td class="sg"><div class="sgt">${label}</div>
+    <div>상 호 : ${docBlank(p.name, 7)}</div><div>사업자번호 : ${docBlank(p.bno, 6)}</div><div>주 소 : ${docBlank(p.addr, 8)}</div>
+    <div class="sgs">대 표 자 : ${docBlank(p.rep, 4)} &nbsp;&nbsp;(인)</div></td>`;
+
+  return `<div class="title">물 품 공 급 계 약 서</div>
+    ${f.title ? `<div class="sub">${docEsc(f.title)}</div>` : ''}
+    <p class="pre">${docBlank(gap.name, 6)}(이하 “갑”이라 한다)과(와) ${docBlank(eul.name, 6)}(이하 “을”이라 한다)은(는) 다음과 같이 물품공급계약을 체결한다.</p>
+    ${articles}
+    <p class="pre" style="margin-top:14px">본 계약의 성립을 증명하기 위하여 계약서 2통을 작성하고, 갑과 을이 각각 서명(날인)한 후 각 1통씩 보관한다.</p>
+    <div class="dt">${docDateKo(f.date)}</div>
+    <table class="sign"><tr>${party(gap, '갑 (공급받는자)')}${party(eul, '을 (공급자)')}</tr></table>`;
+}
+
+function docInspectionHtml(d) {
+  const f = d.f;
+  const buyer    = d.role === 'buyer' ? d.me : d.ot;
+  const supplier = d.role === 'buyer' ? d.ot : d.me;
+  const rows = d.rows.filter(r => r.name || r.ord || r.del);
+  let tOrd = 0, tDel = 0, tPass = 0, tRej = 0, mism = 0;
+  const itemRows = rows.map((r, i) => {
+    const o = docNum(r.ord), dl = docNum(r.del), p = docNum(r.pass), rj = Math.max(0, dl - p);
+    tOrd += o; tDel += dl; tPass += p; tRej += rj;
+    const diff = o && dl && o !== dl;
+    if (diff) mism++;
+    const note = [diff ? `<span class="red">수량 불일치 (발주 ${fmt(o)} / 납품 ${fmt(dl)})</span>` : '', docEsc(r.note)].filter(Boolean).join('<br>');
+    return `<tr><td>${i + 1}</td><td class="l">${docEsc(r.name)}</td><td>${docEsc(r.spec)}</td><td>${docEsc(r.unit)}</td>
+      <td class="r">${r.ord ? fmt(o) : ''}</td><td class="r${diff ? ' red' : ''}">${r.del ? fmt(dl) : ''}</td><td class="r">${r.pass ? fmt(p) : ''}</td><td class="r${rj ? ' red' : ''}">${(r.del || r.pass) ? fmt(rj) : ''}</td><td class="l">${note}</td></tr>`;
+  }).join('') || `<tr><td>1</td><td class="l">&nbsp;</td><td></td><td></td><td></td><td></td><td></td><td></td><td></td></tr>`;
+
+  const chkRows = d.checks.map(c => `<tr><td class="l">${c.item}</td><td class="${c.res === '부적합' ? 'red' : ''}">${c.res === '적합' ? '☑ 적합 ☐ 부적합' : c.res === '부적합' ? '☐ 적합 ☑ 부적합' : '해당없음'}</td><td class="l">${docEsc(c.note)}</td></tr>`).join('');
+  const judgeBox = ['합격', '조건부 합격', '불합격'].map(j => `${f.judge === j ? '☑' : '☐'} ${j}`).join(' &nbsp;&nbsp; ');
+
+  return `<div class="title">검 수 보 고 서</div>
+    <table class="grid info">
+      <tr><th>보고서 번호</th><td>${docEsc(f.no)}</td><th>검수일자</th><td>${docDateKo(f.date)}</td></tr>
+      <tr><th>건 명</th><td>${docEsc(f.title)}</td><th>발주·계약번호</th><td>${docEsc(f.poNo)}</td></tr>
+      <tr><th>납품업체 (공급자)</th><td>${docEsc(supplier.name)}</td><th>납품일자</th><td>${f.delivDate ? docEsc(f.delivDate) : ''}</td></tr>
+      <tr><th>발주처</th><td>${docEsc(buyer.name)}</td><th>검수장소</th><td>${docEsc(f.place)}</td></tr>
+    </table>
+    <div class="sec">1. 검수 품목</div>
+    <table class="grid"><thead><tr><th style="width:28px">No</th><th>품명</th><th>규격</th><th style="width:40px">단위</th><th style="width:64px">발주수량</th><th style="width:64px">납품수량</th><th style="width:64px">합격수량</th><th style="width:56px">불합격</th><th>비고</th></tr></thead>
+      <tbody>${itemRows}<tr class="sum"><td colspan="4">합 계</td><td class="r">${tOrd ? fmt(tOrd) : ''}</td><td class="r">${tDel ? fmt(tDel) : ''}</td><td class="r">${tPass ? fmt(tPass) : ''}</td><td class="r">${tRej ? fmt(tRej) : ''}</td><td></td></tr></tbody></table>
+    ${mism ? `<div class="red" style="font-size:11px;margin:4px 0">※ 발주수량과 납품수량이 일치하지 않는 품목이 ${mism}건 있습니다.</div>` : ''}
+    <div class="sec">2. 검사 항목</div>
+    <table class="grid"><thead><tr><th style="width:150px">검사 항목</th><th style="width:170px">결과</th><th>비고</th></tr></thead><tbody>${chkRows}</tbody></table>
+    <div class="sec">3. 종합 판정</div>
+    <table class="grid info"><tr><td style="font-size:13px;padding:8px">${judgeBox}</td></tr></table>
+    <div class="sec">4. 검수 의견 및 후속 조치</div>
+    <table class="grid info"><tr><th style="width:90px">검수 의견</th><td class="l" style="height:60px">${docNl(f.opinion)}</td></tr>
+      <tr><th>후속 조치</th><td class="l" style="height:60px">${docNl(f.action)}</td></tr></table>
+    <p class="pre" style="margin-top:12px;text-align:center">위와 같이 검수하였음을 확인합니다.</p>
+    <div class="dt">${docDateKo(f.date)}</div>
+    <table class="sign"><tr>
+      <td class="sg"><div class="sgt">검수자</div><div>${f.inspectorRank ? docEsc(f.inspectorRank) + ' ' : ''}${docBlank(f.inspector, 4)} &nbsp;(인)</div></td>
+      <td class="sg"><div class="sgt">입회자</div><div>${f.witnessRank ? docEsc(f.witnessRank) + ' ' : ''}${docBlank(f.witness, 4)} &nbsp;(인)</div></td>
+      <td class="sg"><div class="sgt">납품업체 확인</div><div>${docBlank(supplier.name, 5)} &nbsp;(인)</div></td>
+    </tr></table>`;
+}
+
+function openDocWindow(title, bodyHtml) {
+  const win = window.open('', '_blank', 'width=900,height=900');
+  if (!win) { alert('팝업이 차단되었습니다. 팝업을 허용한 뒤 다시 눌러주세요.'); return; }
+  const fname = JSON.stringify(title.replace(/[\\/:*?"<>|]/g, '')).replace(/</g, '\\u003c');
+  win.document.write(`<!DOCTYPE html><html lang="ko"><head><meta charset="UTF-8"><title>${docEsc(title)}</title>
+<style>
+*{box-sizing:border-box}
+body{font-family:'맑은 고딕','Malgun Gothic',sans-serif;font-size:12.5px;color:#111;line-height:1.7;padding:24px;max-width:800px;margin:0 auto}
+@media print{@page{size:A4;margin:15mm}.no-print{display:none!important}body{padding:0;max-width:none}}
+.no-print{text-align:center;margin-bottom:16px}
+.no-print button{padding:8px 22px;margin:0 4px;border:none;border-radius:6px;background:#2563eb;color:#fff;font-size:13px;cursor:pointer;font-family:inherit}
+.no-print button.g{background:#16a34a}
+.title{text-align:center;font-size:24px;font-weight:700;letter-spacing:8px;margin:6px 0 14px}
+.sub{text-align:center;font-size:14px;margin-bottom:12px;color:#444}
+.pre{margin:6px 0;text-align:justify}
+.art{margin:10px 0;page-break-inside:avoid}
+.at{font-weight:700;margin-bottom:2px}
+.art p{margin:2px 0 2px 8px;text-align:justify}
+.blank{display:inline-block;border-bottom:1px solid #111;min-width:40px;height:1em;vertical-align:baseline}
+table.grid{width:100%;border-collapse:collapse;margin:6px 0;font-size:11.5px}
+table.grid th,table.grid td{border:1px solid #666;padding:4px 6px;text-align:center}
+table.grid th{background:#f0f0f0;font-weight:600;white-space:nowrap}
+table.grid td.l{text-align:left}table.grid td.r{text-align:right}
+table.grid tr.sum td{background:#f7f7f7;font-weight:700}
+table.info th{width:120px}table.info td{text-align:left}
+.sec{font-weight:700;margin:14px 0 2px;font-size:13px}
+.red{color:#dc2626;font-weight:600}
+.dt{text-align:center;margin:18px 0;font-size:14px}
+table.sign{width:100%;border-collapse:separate;border-spacing:10px 0;page-break-inside:avoid}
+td.sg{border:1px solid #666;padding:10px 12px;vertical-align:top;line-height:2}
+.sgt{font-weight:700;border-bottom:1px solid #999;margin-bottom:4px}
+.sgs{margin-top:6px}
+</style></head><body>
+<div class="no-print"><button onclick="window.print()">🖨️ 인쇄 / PDF 저장</button><button class="g" onclick="saveWord()">📄 Word(.doc) 저장</button></div>
+<div id="doc">${bodyHtml}</div>
+<script>
+function saveWord(){
+  var css=document.querySelector('style').innerHTML;
+  var html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>'+css+'</style></head><body>'+document.getElementById('doc').innerHTML+'</body></html>';
+  var b=new Blob(['\\ufeff'+html],{type:'application/msword'});
+  var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=${fname}+'.doc';document.body.appendChild(a);a.click();document.body.removeChild(a);
+}
+<\/script></body></html>`);
+  win.document.close();
 }
 
 // ── Modal ─────────────────────────────────────────────────
