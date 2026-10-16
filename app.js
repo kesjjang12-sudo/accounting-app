@@ -861,6 +861,200 @@ function render(page) {
   if (page === 'docs')         renderDocs(el);
 }
 
+// ── 도장 (이미지 생성·업로드, 문서 서명란에 자동 날인) ─────
+const STAMP_FONT = "'궁서','Gungsuh','HYGungSo-Bold','Noto Serif CJK KR','Batang','바탕',serif";
+const STAMP_CSS  = '.stm{position:relative;display:inline-block}.stm img{position:absolute;left:50%;top:50%;width:56px;height:56px;transform:translate(-50%,-48%);mix-blend-mode:multiply;opacity:.93;pointer-events:none}';
+
+function stampUrl() { return (companyInfo && companyInfo.stamp && companyInfo.stamp.dataUrl) || ''; }
+function stampMark(on, label) {
+  const u = stampUrl();
+  return `<span class="stm">${label || '(인)'}${on !== false && u ? `<img src="${u}" alt="">` : ''}</span>`;
+}
+
+// 전통 도장 배열: 오른쪽 열 위→아래, 그다음 왼쪽 열
+function stampCols(text) {
+  const ch = [...String(text || '').replace(/\s/g, '')];
+  const right = Math.ceil(ch.length / 2);
+  return [ch.slice(0, right), ch.slice(right)];
+}
+
+function stampSvg(style, t1, t2) {
+  const R = '#d6232a';
+  const cols = (cx, cy, boxH, maxFs) => {
+    const [rt, lt] = stampCols(t2);
+    const rows = Math.max(rt.length, lt.length, 1);
+    const fs = Math.min(maxFs, Math.floor(boxH / rows) - 2);
+    const lh = fs * 1.04, top = cy - (rows * lh) / 2;
+    const dx = lt.length ? fs * 0.56 : 0;
+    const put = (arr, x) => arr.map((c, i) => `<text x="${x}" y="${(top + (i + 0.84) * lh).toFixed(1)}" font-size="${fs}" text-anchor="middle" font-family="${STAMP_FONT}" font-weight="900" fill="${R}">${docEsc(c)}</text>`).join('');
+    return put(rt, cx + dx) + put(lt, cx - dx);
+  };
+  let inner;
+  if (style === 'round') {
+    const n = [...(t1 || '')].length;
+    const ring = n ? `<defs><path id="rp" d="M100,171 A71,71 0 1 1 100,29 A71,71 0 1 1 100,171"/></defs>
+      <text font-size="21" font-family="${STAMP_FONT}" font-weight="900" fill="${R}" text-anchor="middle"><textPath href="#rp" startOffset="50%" textLength="${Math.min(380, n * 34)}" lengthAdjust="spacing">${docEsc(t1)}</textPath></text>` : '';
+    inner = `<circle cx="100" cy="100" r="94" fill="none" stroke="${R}" stroke-width="6"/>
+      <circle cx="100" cy="100" r="62" fill="none" stroke="${R}" stroke-width="2"/>${ring}${cols(100, 100, 84, 34)}`;
+  } else {
+    inner = `<rect x="12" y="12" width="176" height="176" rx="6" fill="none" stroke="${R}" stroke-width="8"/>${cols(100, 100, 156, 76)}`;
+  }
+  return `<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200" viewBox="0 0 200 200">${inner}</svg>`;
+}
+
+function stampSvgToPng(svg) {
+  return new Promise((res, rej) => {
+    const img = new Image();
+    img.onload = () => {
+      const c = document.createElement('canvas');
+      c.width = c.height = 240;
+      c.getContext("2d").drawImage(img, 0, 0, 240, 240);
+      res(c.toDataURL('image/png'));
+    };
+    img.onerror = () => rej(new Error('도장 이미지를 만들지 못했습니다'));
+    img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg);
+  });
+}
+
+// 사진으로 찍은 도장: 크기 축소 + 흰 배경 투명 처리
+function stampFromFile(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      const sc = Math.min(1, 300 / Math.max(img.width, img.height));
+      const w = Math.max(1, Math.round(img.width * sc)), h = Math.max(1, Math.round(img.height * sc));
+      const c = document.createElement('canvas');
+      c.width = w; c.height = h;
+      const ctx = c.getContext('2d');
+      ctx.drawImage(img, 0, 0, w, h);
+      const px = ctx.getImageData(0, 0, w, h), d = px.data;
+      for (let i = 0; i < d.length; i += 4) {
+        const lum = (d[i] + d[i + 1] + d[i + 2]) / 3;
+        d[i + 3] = lum >= 235 ? 0 : lum <= 170 ? 255 : Math.round((235 - lum) / 65 * 255);
+      }
+      ctx.putImageData(px, 0, 0);
+      URL.revokeObjectURL(url);
+      res(c.toDataURL('image/png'));
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error('이미지를 읽을 수 없습니다')); };
+    img.src = url;
+  });
+}
+
+let _stampDraft = null;
+
+function openStampModal() {
+  const ci = companyInfo, s = ci.stamp || {};
+  const style = s.style || (ci.representative ? 'square' : 'round');
+  _stampDraft = { style, t1: s.t1 != null ? s.t1 : (ci.name || ''),
+    t2: s.t2 != null ? s.t2 : (style === 'round' ? '대표이사인' : (ci.representative || '') + '인'),
+    dataUrl: s.dataUrl || '', uploaded: !!s.uploaded };
+  const D = _stampDraft;
+  openModal('🔴 도장 설정', `
+    <p style="font-size:12px;color:var(--gray-500);margin-bottom:12px">견적서·거래명세서·계약서·검수보고서의 (인) 자리에 자동으로 찍힙니다. 글자를 바꾸거나 내 도장 사진을 올릴 수 있습니다.</p>
+    <div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:13px">
+      <label style="cursor:pointer"><input type="radio" name="stp-style" value="square" ${D.style === 'square' ? 'checked' : ''} onchange="stampStyleChange(this.value)"> 사각 (개인 이름 도장)</label>
+      <label style="cursor:pointer"><input type="radio" name="stp-style" value="round" ${D.style === 'round' ? 'checked' : ''} onchange="stampStyleChange(this.value)"> 원형 (상호 + 대표이사인)</label>
+      <label style="cursor:pointer"><input type="radio" name="stp-style" value="image" ${D.style === 'image' ? 'checked' : ''} onchange="stampStyleChange(this.value)"> 내 도장 사진</label>
+    </div>
+    <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start">
+      <div style="flex:1;min-width:240px">
+        <div class="form-group" id="stp-g1"><label>바깥 글자 (원형: 상호)</label><input id="stp-t1" class="form-control" value="${docEsc(D.t1)}" oninput="stampRefresh()"></div>
+        <div class="form-group" id="stp-g2"><label>안쪽 글자 (예: 홍길동인 / 대표이사인)</label><input id="stp-t2" class="form-control" value="${docEsc(D.t2)}" oninput="stampRefresh()"></div>
+        <div class="form-group" id="stp-g3"><label>도장 사진 올리기 <span style="font-size:11px;color:var(--gray-400)">(흰 종이에 찍은 도장 — 배경은 자동으로 투명 처리)</span></label>
+          <input type="file" accept="image/*" class="form-control" onchange="stampUpload(this)"></div>
+      </div>
+      <div style="width:170px;text-align:center">
+        <div style="width:160px;height:160px;border:1px dashed var(--gray-300);border-radius:8px;display:flex;align-items:center;justify-content:center;background:#fff">
+          <img id="stp-prev" alt="" style="max-width:150px;max-height:150px;mix-blend-mode:multiply"></div>
+        <div style="font-size:11px;color:var(--gray-400);margin-top:4px">미리보기</div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger" onclick="stampRemove()" style="margin-right:auto">도장 삭제</button>
+      <button class="btn btn-ghost" onclick="closeModal()">취소</button>
+      <button class="btn btn-primary" onclick="stampSave()">저장</button>
+    </div>`);
+  stampLayout();
+  stampRefresh();
+}
+
+function stampLayout() {
+  const img = _stampDraft.style === 'image';
+  ['stp-g1', 'stp-g2'].forEach(id => { const e = document.getElementById(id); if (e) e.style.display = img ? 'none' : ''; });
+  const g3 = document.getElementById('stp-g3'); if (g3) g3.style.display = img ? '' : 'none';
+  const g1 = document.getElementById('stp-g1'); if (g1) g1.style.display = (!img && _stampDraft.style === 'round') ? '' : 'none';
+}
+
+function stampStyleChange(v) {
+  const D = _stampDraft, rep = companyInfo.representative || '';
+  D.style = v;
+  const t2 = document.getElementById('stp-t2');
+  if (t2) {
+    if (v === 'round' && (t2.value === rep + '인' || !t2.value)) t2.value = '대표이사인';
+    if (v === 'square' && (t2.value === '대표이사인' || !t2.value)) t2.value = rep + '인';
+  }
+  stampLayout();
+  stampRefresh();
+}
+
+async function stampRefresh() {
+  const D = _stampDraft, prev = document.getElementById('stp-prev');
+  if (!D || !prev) return;
+  if (D.style === 'image') { prev.src = D.uploaded ? D.dataUrl : ''; return; }
+  D.t1 = document.getElementById('stp-t1')?.value.trim() || '';
+  D.t2 = document.getElementById('stp-t2')?.value.trim() || '';
+  try { D.dataUrl = await stampSvgToPng(stampSvg(D.style, D.t1, D.t2)); D.uploaded = false; prev.src = D.dataUrl; }
+  catch (e) { prev.removeAttribute('src'); }
+}
+
+async function stampUpload(input) {
+  const f = input.files[0];
+  input.value = '';
+  if (!f) return;
+  try {
+    _stampDraft.dataUrl = await stampFromFile(f);
+    _stampDraft.uploaded = true;
+    _stampDraft.style = 'image';
+    document.querySelector('input[name="stp-style"][value="image"]').checked = true;
+    stampLayout();
+    document.getElementById('stp-prev').src = _stampDraft.dataUrl;
+  } catch (e) { alert(e.message); }
+}
+
+function stampSave() {
+  const D = _stampDraft;
+  if (!D.dataUrl) { alert('도장 이미지가 없습니다. 글자를 입력하거나 사진을 올려주세요.'); return; }
+  companyInfo = { ...companyInfo, stampOff: false, stamp: { style: D.style, t1: D.t1, t2: D.t2, dataUrl: D.dataUrl, uploaded: D.uploaded, manual: true } };
+  saveCompanyInfo();
+  closeModal();
+  if (currentPage === 'docs') renderDocs(document.getElementById('page-docs'));
+}
+
+function stampRemove() {
+  if (!confirm('저장된 도장을 삭제할까요? 문서에는 (인)만 표시됩니다.')) return;
+  companyInfo = { ...companyInfo, stamp: null, stampOff: true };
+  saveCompanyInfo();
+  closeModal();
+  if (currentPage === 'docs') renderDocs(document.getElementById('page-docs'));
+}
+
+// 처음 사용 시 대표자명(없으면 상호)으로 기본 도장 자동 생성
+async function ensureDefaultStamp() {
+  const ci = companyInfo;
+  if (!ci || ci.stampOff || (ci.stamp && ci.stamp.dataUrl)) return;
+  const rep = (ci.representative || '').trim(), name = (ci.name || '').trim();
+  if (!rep && !name) return;
+  const style = rep ? 'square' : 'round';
+  const t1 = name, t2 = style === 'round' ? '대표이사인' : rep + '인';
+  try {
+    const dataUrl = await stampSvgToPng(stampSvg(style, t1, t2));
+    companyInfo = { ...companyInfo, stamp: { style, t1, t2, dataUrl, uploaded: false, manual: false } };
+    saveCompanyInfo();
+  } catch (e) {}
+}
+
 // ── 서류 작성 (물품공급계약서 · 검수보고서) ────────────────
 let docTpl    = 'contract';
 let docRows   = [];
@@ -909,12 +1103,12 @@ function docDefaults(tpl) {
   const me = { name: ci.name || '', rep: ci.representative || '', bno: ci.businessNumber || '', addr: ci.address || '', tel: ci.tel || '' };
   const ot = { name: '', rep: '', bno: '', addr: '', tel: '' };
   if (tpl === 'contract') return {
-    role: 'supplier', vendorId: '', me, ot, rows: [{ name: '', spec: '', unit: '', qty: '', price: '' }],
+    role: 'supplier', vendorId: '', stamp: true, me, ot, rows: [{ name: '', spec: '', unit: '', qty: '', price: '' }],
     f: { title: '', date: today(), delivDate: '', delivPlace: '', freight: '공급자', vatMode: '별도', payMethod: '계좌이체',
          payTerm: '검수 합격 후 30일 이내', account: '', inspDays: '7', warrantyMonths: '12', lateRate: '0.1', period: '', court: '', special: '' }
   };
   return {
-    role: 'buyer', vendorId: '', me, ot, rows: [{ name: '', spec: '', unit: '', ord: '', del: '', pass: '', rej: '', note: '' }],
+    role: 'buyer', vendorId: '', stamp: true, me, ot, rows: [{ name: '', spec: '', unit: '', ord: '', del: '', pass: '', rej: '', note: '' }],
     checks: DOC_CHECK_ITEMS.map(i => ({ item: i, res: '적합', note: '' })),
     f: { no: '', poNo: '', title: '', date: today(), delivDate: '', place: '', inspector: '', inspectorRank: '', witness: '', witnessRank: '', judge: '합격', opinion: '', action: '' }
   };
@@ -927,6 +1121,7 @@ function docLoadState(tpl) {
   if (saved && saved.f) {
     base.role = saved.role || base.role;
     base.vendorId = saved.vendorId || '';
+    base.stamp = saved.stamp !== false;
     base.ot = { ...base.ot, ...(saved.ot || {}) };
     base.me = { ...base.me, ...Object.fromEntries(Object.entries(saved.me || {}).filter(([, v]) => v)) };
     base.f = { ...base.f, ...saved.f, date: today() };
@@ -940,7 +1135,9 @@ function docLoadState(tpl) {
 function docCollect() {
   const st = docLoadState(docTpl);
   const g = id => document.getElementById(id)?.value ?? '';
+  const stampBox = document.getElementById('doc-stamp');
   const d = { role: document.querySelector('input[name="doc-role"]:checked')?.value || st.role, vendorId: g('doc-vendor'),
+              stamp: stampBox ? stampBox.checked : st.stamp !== false,
               me: {}, ot: {}, f: {}, rows: docRows.map(r => ({ ...r })) };
   PARTY_KEYS.forEach(([k]) => { d.me[k] = g('doc-me-' + k).trim(); d.ot[k] = g('doc-ot-' + k).trim(); });
   DOC_FIELDS[docTpl].forEach(k => { d.f[k] = g('doc-f-' + k).trim(); });
@@ -1022,7 +1219,8 @@ function renderDocs(el) {
     <div class="page-header"><div>
       <div class="page-title">📄 서류 작성</div>
       <div class="page-subtitle">양식을 고르고 빈칸을 채운 뒤 <b>생성하기</b>를 누르면 인쇄·PDF·Word용 문서가 만들어집니다</div>
-    </div></div>
+    </div>
+    <button class="btn btn-ghost btn-sm" onclick="openStampModal()">🔴 도장 설정</button></div>
     <div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap">${tabs}</div>
     <div id="doc-form">
       ${roleHtml}
@@ -1044,6 +1242,8 @@ function renderDocs(el) {
       </div>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-primary" onclick="docGenerate()">📄 생성하기</button>
+        <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin:0 6px" title="${stampUrl() ? '' : '도장이 아직 없습니다. 도장 설정에서 만들어주세요'}">
+          <input type="checkbox" id="doc-stamp" ${st.stamp !== false && stampUrl() ? 'checked' : ''} ${stampUrl() ? '' : 'disabled'}> 🔴 도장 찍기${stampUrl() ? '' : ' (도장 없음)'}</label>
         <button class="btn btn-ghost" onclick="docReset()">↺ 초기화</button>
       </div>
       <div style="font-size:11px;color:var(--gray-400);margin-top:10px">${docTpl === 'contract' ? '※ 일반적인 물품공급계약 양식입니다. 금액이 크거나 특수한 계약은 서명 전에 전문가(법무사·변호사) 검토를 받으세요.' : '※ 수량 불일치 품목은 문서에 자동으로 표시됩니다.'}</div>
@@ -1211,9 +1411,9 @@ function docContractHtml(d) {
   A.push(['기타', ['본 계약에 정하지 아니한 사항은 관계 법령 및 상관례에 따른다.']]);
 
   const articles = A.map(([t, ps], i) => `<div class="art"><div class="at">제${i + 1}조 (${t})</div>${ps.map(p => p.startsWith('<table') ? p : `<p>${p}</p>`).join('')}</div>`).join('');
-  const party = (p, label) => `<td class="sg"><div class="sgt">${label}</div>
+  const party = (p, label, isMe) => `<td class="sg"><div class="sgt">${label}</div>
     <div>상 호 : ${docBlank(p.name, 7)}</div><div>사업자번호 : ${docBlank(p.bno, 6)}</div><div>주 소 : ${docBlank(p.addr, 8)}</div>
-    <div class="sgs">대 표 자 : ${docBlank(p.rep, 4)} &nbsp;&nbsp;(인)</div></td>`;
+    <div class="sgs">대 표 자 : ${docBlank(p.rep, 4)} &nbsp;&nbsp;${isMe ? stampMark(d.stamp) : '(인)'}</div></td>`;
 
   return `<div class="title">물 품 공 급 계 약 서</div>
     ${f.title ? `<div class="sub">${docEsc(f.title)}</div>` : ''}
@@ -1221,7 +1421,7 @@ function docContractHtml(d) {
     ${articles}
     <p class="pre" style="margin-top:14px">본 계약의 성립을 증명하기 위하여 계약서 2통을 작성하고, 갑과 을이 각각 서명(날인)한 후 각 1통씩 보관한다.</p>
     <div class="dt">${docDateKo(f.date)}</div>
-    <table class="sign"><tr>${party(gap, '갑 (공급받는자)')}${party(eul, '을 (공급자)')}</tr></table>`;
+    <table class="sign"><tr>${party(gap, '갑 (공급받는자)', d.role === 'buyer')}${party(eul, '을 (공급자)', d.role === 'supplier')}</tr></table>`;
 }
 
 function docInspectionHtml(d) {
@@ -1264,9 +1464,9 @@ function docInspectionHtml(d) {
     <p class="pre" style="margin-top:12px;text-align:center">위와 같이 검수하였음을 확인합니다.</p>
     <div class="dt">${docDateKo(f.date)}</div>
     <table class="sign"><tr>
-      <td class="sg"><div class="sgt">검수자</div><div>${f.inspectorRank ? docEsc(f.inspectorRank) + ' ' : ''}${docBlank(f.inspector, 4)} &nbsp;(인)</div></td>
+      <td class="sg"><div class="sgt">검수자</div><div>${f.inspectorRank ? docEsc(f.inspectorRank) + ' ' : ''}${docBlank(f.inspector, 4)} &nbsp;${d.role === 'buyer' ? stampMark(d.stamp) : '(인)'}</div></td>
       <td class="sg"><div class="sgt">입회자</div><div>${f.witnessRank ? docEsc(f.witnessRank) + ' ' : ''}${docBlank(f.witness, 4)} &nbsp;(인)</div></td>
-      <td class="sg"><div class="sgt">납품업체 확인</div><div>${docBlank(supplier.name, 5)} &nbsp;(인)</div></td>
+      <td class="sg"><div class="sgt">납품업체 확인</div><div>${docBlank(supplier.name, 5)} &nbsp;${d.role === 'supplier' ? stampMark(d.stamp) : '(인)'}</div></td>
     </tr></table>`;
 }
 
@@ -1299,18 +1499,33 @@ table.info th{width:120px}table.info td{text-align:left}
 .red{color:#dc2626;font-weight:600}
 .dt{text-align:center;margin:18px 0;font-size:14px}
 table.sign{width:100%;border-collapse:separate;border-spacing:10px 0;page-break-inside:avoid}
-td.sg{border:1px solid #666;padding:10px 12px;vertical-align:top;line-height:2}
+td.sg{border:1px solid #666;padding:10px 12px 22px;vertical-align:top;line-height:2}
 .sgt{font-weight:700;border-bottom:1px solid #999;margin-bottom:4px}
-.sgs{margin-top:6px}
+.sgs{margin-top:16px}
+${STAMP_CSS}
 </style></head><body>
 <div class="no-print"><button onclick="window.print()">🖨️ 인쇄 / PDF 저장</button><button class="g" onclick="saveWord()">📄 Word(.doc) 저장</button></div>
 <div id="doc">${bodyHtml}</div>
 <script>
 function saveWord(){
-  var css=document.querySelector('style').innerHTML;
-  var html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>'+css+'</style></head><body>'+document.getElementById('doc').innerHTML+'</body></html>';
-  var b=new Blob(['\\ufeff'+html],{type:'application/msword'});
-  var a=document.createElement('a');a.href=URL.createObjectURL(b);a.download=${fname}+'.doc';document.body.appendChild(a);a.click();document.body.removeChild(a);
+  var css=document.querySelector('style').innerHTML+'.stm img{position:static!important;transform:none!important;width:46px!important;height:46px!important;vertical-align:middle}';
+  var body=document.getElementById('doc').innerHTML;
+  var imgs=[];
+  body=body.replace(new RegExp('src="(data:image/png;base64,[^"]+)"','g'),function(m,u){imgs.push(u.split(',')[1]);return 'src="file:///C:/doc_img'+(imgs.length-1)+'.png"';});
+  var html='<html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:w="urn:schemas-microsoft-com:office:word" xmlns="http://www.w3.org/TR/REC-html40"><head><meta charset="UTF-8"><style>'+css+'</style></head><body>'+body+'</body></html>';
+  var blob;
+  if(!imgs.length){
+    blob=new Blob(['\\ufeff'+html],{type:'application/msword'});
+  }else{
+    var NL=String.fromCharCode(13,10),B='----=_NextPart_docimg';
+    var wrap=function(t){var o='';for(var i=0;i<t.length;i+=76)o+=t.substr(i,76)+NL;return o;};
+    var m='MIME-Version: 1.0'+NL+'Content-Type: multipart/related; boundary="'+B+'"; type="text/html"'+NL+NL;
+    m+='--'+B+NL+'Content-Type: text/html; charset="utf-8"'+NL+'Content-Transfer-Encoding: base64'+NL+'Content-Location: file:///C:/doc.htm'+NL+NL+wrap(btoa(unescape(encodeURIComponent(html))))+NL;
+    imgs.forEach(function(b,i){m+='--'+B+NL+'Content-Type: image/png'+NL+'Content-Transfer-Encoding: base64'+NL+'Content-Location: file:///C:/doc_img'+i+'.png'+NL+NL+wrap(b)+NL;});
+    m+='--'+B+'--';
+    blob=new Blob([m],{type:'application/msword'});
+  }
+  var a=document.createElement('a');a.href=URL.createObjectURL(blob);a.download=${fname}+'.doc';document.body.appendChild(a);a.click();document.body.removeChild(a);
 }
 <\/script></body></html>`);
   win.document.close();
@@ -2515,6 +2730,7 @@ td{border:1px solid #aaa;padding:4px;text-align:center}
 .srow.grand{font-size:14px;font-weight:700;border-top:1px solid #555;padding-top:6px;margin-top:6px}
 .stamp{text-align:right;margin-top:18px}
 .stamp-box{display:inline-block;border:1px solid #888;padding:8px 24px;text-align:center;line-height:1.6;font-size:11px}
+${STAMP_CSS}
 </style></head><body>
 <div class="no-print"><button class="print-btn" onclick="window.print()">🖨️ 인쇄 / PDF 저장</button></div>
 <div class="doc-title">거 래 명 세 서</div>
@@ -2547,7 +2763,7 @@ td{border:1px solid #aaa;padding:4px;text-align:center}
   <div class="srow"><span>세액 합계 (VAT 10%)</span><span>${fmt(grandTax)}원</span></div>
   <div class="srow grand"><span>합 계 금 액</span><span>${fmt(grandAmt+grandTax)}원</span></div>
 </div>
-<div class="stamp"><div class="stamp-box"><div>${ci.name||'(공급자)'}</div><div>대표자: ${ci.representative||''} (인)</div></div></div>
+<div class="stamp"><div class="stamp-box"><div>${ci.name||'(공급자)'}</div><div>대표자: ${ci.representative||''} ${stampMark(true)}</div></div></div>
 </body></html>`;
 }
 
@@ -2593,6 +2809,7 @@ function openCompanySettings() {
       <div class="form-group full"><label>이메일 <span style="font-size:11px;color:var(--gray-400)">(세금계산서용)</span></label><input id="cs-email" class="form-control" value="${ci.email||''}"></div>
     </div>
     <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="openStampModal()" style="margin-right:auto">🔴 도장 설정</button>
       <button class="btn btn-ghost" onclick="closeModal()">취소</button>
       <button class="btn btn-primary" onclick="saveCompanyInfoFromModal()">저장</button>
     </div>`;
@@ -2600,6 +2817,7 @@ function openCompanySettings() {
 }
 function saveCompanyInfoFromModal() {
   companyInfo = {
+    ...companyInfo,
     name:           document.getElementById('cs-name').value.trim(),
     representative: document.getElementById('cs-rep').value.trim(),
     businessNumber: document.getElementById('cs-biz').value.trim(),
@@ -2609,7 +2827,9 @@ function saveCompanyInfoFromModal() {
     bizItem:        document.getElementById('cs-bitem').value.trim(),
     email:          document.getElementById('cs-email').value.trim()
   };
+  if (companyInfo.stamp && !companyInfo.stamp.manual) companyInfo.stamp = null;
   saveCompanyInfo();
+  ensureDefaultStamp();
   closeModal();
 }
 
@@ -4376,6 +4596,7 @@ td{border:1px solid #aaa;padding:4px;text-align:center}
 .memo-box{margin-top:10px;border:1px dashed #aaa;padding:8px 12px;font-size:11px;color:#555;border-radius:4px}
 .stamp{text-align:right;margin-top:18px}
 .stamp-box{display:inline-block;border:1px solid #888;padding:8px 24px;text-align:center;line-height:1.6;font-size:11px}
+${STAMP_CSS}
 </style></head><body>
 <div class="no-print"><button class="print-btn" onclick="window.print()">🖨️ 인쇄 / PDF 저장</button></div>
 <div class="doc-title">${docTitle}</div>
@@ -4427,8 +4648,8 @@ td{border:1px solid #aaa;padding:4px;text-align:center}
 ${q.memo ? `<div class="memo-box">📝 메모: ${q.memo}</div>` : ''}
 <div class="stamp">
   <div class="stamp-box">
-    <div>${ci.name||'(발행자)'}</div>
-    <div>대표자: ${ci.representative||''} (인)</div>
+    <div>${(q.issuer&&q.issuer.name)||ci.name||'(발행자)'}</div>
+    <div>대표자: ${(q.issuer&&q.issuer.representative)||ci.representative||''} ${q.issuer ? '(인)' : stampMark(true)}</div>
   </div>
 </div>
 </body></html>`;
@@ -6805,6 +7026,7 @@ document.addEventListener('DOMContentLoaded', () => {
   renderSidebarBiz();
   render('home');
   renderBackupStatus();
+  ensureDefaultStamp();
   if (sessionStorage.getItem('acc_auto_synced')) {
     sessionStorage.removeItem('acc_auto_synced');
     showSheetsBackupStatus('☁ 다른 기기의 변경사항을 불러왔습니다', 'success');
