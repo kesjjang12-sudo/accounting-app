@@ -165,9 +165,23 @@ async function cloudPull(opts = {}) {
   localStorage.setItem('ledger_cloud_last', new Date().toISOString());
   if (!businesses.length || !businesses.find(b => b.id === currentBizId)) { currentBizId = 'default'; saveCurrentBiz(); }
   reloadGlobalsFromLocal();
-  if (document.getElementById('modal-overlay').classList.contains('hidden')) { renderSidebarBiz(); render(currentPage); }
-  else _cloudRenderPending = true;
+  cloudApplyRender();
   return { serverEmpty };
+}
+
+function cloudApplyRender() {
+  const modalOpen = !document.getElementById('modal-overlay').classList.contains('hidden');
+  if (modalOpen || currentPage === 'docs') { _cloudRenderPending = true; if (currentPage === 'docs' && !modalOpen) showSheetsBackupStatus('☁ 새 데이터 수신 — 다른 화면으로 이동하면 반영됩니다', 'success'); return; }
+  renderSidebarBiz();
+  if (currentPage === 'tax') {
+    const vals = {};
+    document.querySelectorAll('#page-tax input, #page-tax select').forEach(el => { if (el.id) vals[el.id] = el.type === 'checkbox' ? el.checked : el.value; });
+    render('tax');
+    Object.entries(vals).forEach(([id, v]) => { const el = document.getElementById(id); if (!el) return; if (el.type === 'checkbox') el.checked = v; else el.value = v; });
+    try { recalcTax(); } catch {}
+    return;
+  }
+  render(currentPage);
 }
 
 function reloadGlobalsFromLocal() {
@@ -178,7 +192,7 @@ function reloadGlobalsFromLocal() {
   transactions = DB.load('acc_transactions');
   companyInfo  = DB.load('acc_company', '{}');
   quotes       = DB.load('acc_quotes');
-  _candidatesCache = null; _depositsCache = null; docStates = {};
+  _candidatesCache = null; _depositsCache = null; if (currentPage !== 'docs') docStates = {};
 }
 
 // 이 기기의 모든 데이터를 서버에 올림 (첫 로그인 이전 / 복원 후 전체 반영)
@@ -457,7 +471,10 @@ async function cloudAfterUnlock(offline) {
   if (cloudUser && !offline) { await cloudStart(); }
   else if (cloudUser && offline) { cloudErr = '오프라인 — 연결되면 자동으로 다시 동기화합니다'; renderCloudStatus(); window.addEventListener('online', () => cloudRetry(), { once: true }); }
   ensureDefaultStamp();
-  if (localStorage.getItem('ledger_backup_pending')) runAutoSheetsBackup({ silent: true });
+  if (cloudUser && APPS_SCRIPT_URL && SHEETS_SECRET) {
+    if (/알 수 없는 action/.test(localStorage.getItem('ledger_last_backup_err') || '')) { localStorage.removeItem('ledger_last_backup_err'); localStorage.setItem('acc_last_backup_ok', '1'); renderBackupStatus(); }
+    setTimeout(() => runAutoSheetsBackup({ silent: true }), 4000);
+  } else if (localStorage.getItem('ledger_backup_pending')) runAutoSheetsBackup({ silent: true });
 }
 
 async function cloudReconnect() {
@@ -936,7 +953,8 @@ function renderBackupStatus() {
   const ok  = localStorage.getItem('acc_last_backup_ok') !== '0';
   const err = localStorage.getItem('ledger_last_backup_err') || '';
   if (!ok) {
-    el.innerHTML = `<span style="color:#f87171;font-weight:600;cursor:pointer" onclick="openBackupDiagnostics()" title="${docEsc(err)}">⚠ 백업 실패 — ${docEsc(err.slice(0, 40))}${err.length > 40 ? '…' : ''}<br><span style="font-weight:400;color:#fca5a5">클릭하면 진단</span></span>`;
+    const hint = /알 수 없는 action/.test(err) ? 'GAS 코드가 옛 버전입니다 — Code.gs를 다시 붙여넣고 재배포' : err.slice(0, 40) + (err.length > 40 ? '…' : '');
+    el.innerHTML = `<span style="color:#f87171;font-weight:600;cursor:pointer" onclick="openBackupDiagnostics()" title="${docEsc(err)}">⚠ 시트 사본 백업 실패 — ${docEsc(hint)}<br><span style="font-weight:400;color:#fca5a5">클릭하면 진단</span></span>`;
     return;
   }
   if (!at) { el.innerHTML = '<span style="color:#94a3b8">☁ 백업 대기중…</span>'; return; }
@@ -946,9 +964,9 @@ function renderBackupStatus() {
   const pend  = hasUnsyncedLocal() ? ' <span style="color:#fbbf24">· 전송 대기</span>' : '';
   if (stale) {
     const md = pad2(d.getMonth() + 1) + '/' + pad2(d.getDate());
-    el.innerHTML = '<span style="color:#fbbf24">☁ 마지막 백업 ' + md + ' ' + hm + ' (오래됨)</span>' + pend;
+    el.innerHTML = '<span style="color:#fbbf24">📄 시트 사본 ' + md + ' ' + hm + ' (오래됨)</span>' + pend;
   } else {
-    el.innerHTML = '<span style="color:#4ade80">☁ 마지막 백업 ' + hm + ' ✓</span>' + pend;
+    el.innerHTML = '<span style="color:#4ade80">📄 시트 사본 ' + hm + ' ✓</span>' + pend;
   }
 }
 
@@ -1555,6 +1573,7 @@ let currentPage = 'home';
 
 function navigate(page) {
   currentPage = page;
+  _cloudRenderPending = false;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.page === page));
   document.querySelectorAll('.page').forEach(el => el.classList.toggle('hidden', el.id !== 'page-' + page));
   render(page);

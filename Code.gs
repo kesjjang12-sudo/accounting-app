@@ -9,6 +9,14 @@ const SECRET_KEY = 'a4463116!';
 // SMS 앱에서 보낼 secret (같게 둬도 되고, 따로 둬도 됨)
 const SMS_SECRET = 'a4463116!';
 
+// ── 서버 DB(Supabase) 직접 반영 ──
+// 문자(카드승인·입금)가 오면 시트에 기록하는 동시에 서버 DB에도 넣어, 앱이 켜져 있지 않아도 모든 기기에 바로 보이게 한다.
+// ⚠ [프로젝트 설정 → 스크립트 속성]에 LEDGER_PIN = 앱 비밀번호 4자리 를 넣어야 동작한다 (비밀번호를 바꾸면 여기도 바꿀 것).
+const SB_URL  = 'https://lgbhyqneidldvoxwvbdh.supabase.co';
+const SB_KEY  = 'sb_publishable_FNEzw7Th_V9F6fWBF1C0zQ_Tvt9JRW9';
+const SB_USER = 'owner@jangbu.app';
+const SB_SALT = 'jangbu-ledger-v1';
+
 const BUSINESS_CARDS = ['롯데카드'];   // 사업용 → pending 후보 등록 (라스베가스=롯데카드 별칭)
 const PERSONAL_CARDS = ['현대카드'];   // 개인용 → excluded 기록
 
@@ -441,6 +449,7 @@ function handleDeposit(body, receivedAt) {
   sheet.appendRow([id, parsed.date, parsed.depositor, parsed.amount, parsed.bank, 'pending', receivedAt, body]);
   const r = sheet.getLastRow();
   sheet.getRange(r, 2).setNumberFormat('@').setValue(String(parsed.date));
+  cloudInsertRecord('acc_deposits', { id: id, date: parsed.date, depositor: parsed.depositor, amount: parsed.amount, bank: parsed.bank, status: 'pending', receivedAt: receivedAt, body: body });
   return respond({ success: true, status: 'deposit_pending' });
 }
 
@@ -540,6 +549,8 @@ function handleSms(payload) {
     id, parsed.date, parsed.merchant, parsed.amount, cardType,
     'pending', suggestCategory(parsed.merchant), receivedAt, body
   ]);
+  cloudInsertRecord('acc_expense_candidates', { id: id, date: parsed.date, merchant: parsed.merchant, amount: parsed.amount, cardType: cardType,
+    status: 'pending', suggestedCategory: suggestCategory(parsed.merchant), receivedAt: receivedAt, body: body });
   return respond({ success: true, status: 'pending' });
 }
 
@@ -551,6 +562,67 @@ function appendCandidate(body, receivedAt, cardType, status) {
     id, parsed.date, parsed.merchant, parsed.amount, cardType,
     status, suggestCategory(parsed.merchant), receivedAt, body
   ]);
+  cloudInsertRecord('acc_expense_candidates', { id: id, date: parsed.date, merchant: parsed.merchant, amount: parsed.amount, cardType: cardType,
+    status: status, suggestedCategory: suggestCategory(parsed.merchant), receivedAt: receivedAt, body: body });
+}
+
+// ══════════════════════════════════════════════════════════
+// ── 서버 DB 반영 (Supabase REST) ──────────────────────────
+// ══════════════════════════════════════════════════════════
+function cloudDerivedPassword() {
+  const pin = PropertiesService.getScriptProperties().getProperty('LEDGER_PIN');
+  if (!pin) return '';
+  const bytes = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, SB_SALT + ':' + String(pin).trim(), Utilities.Charset.UTF_8);
+  return bytes.map(function (b) { return ('0' + ((b + 256) % 256).toString(16)).slice(-2); }).join('');
+}
+
+// 앱 비밀번호로 공용 계정에 로그인해 토큰을 얻는다 (50분 캐시)
+function cloudToken() {
+  const cache = CacheService.getScriptCache();
+  const hit = cache.get('sb_token');
+  if (hit) return JSON.parse(hit);
+  const pw = cloudDerivedPassword();
+  if (!pw) { Logger.log('LEDGER_PIN 스크립트 속성이 없어 서버 DB 반영을 건너뜀'); return null; }
+  const res = UrlFetchApp.fetch(SB_URL + '/auth/v1/token?grant_type=password', {
+    method: 'post', contentType: 'application/json',
+    headers: { apikey: SB_KEY },
+    payload: JSON.stringify({ email: SB_USER, password: pw }),
+    muteHttpExceptions: true
+  });
+  if (res.getResponseCode() !== 200) { Logger.log('서버 로그인 실패: ' + res.getContentText().slice(0, 200)); return null; }
+  const j = JSON.parse(res.getContentText());
+  const tok = { access_token: j.access_token, user_id: j.user && j.user.id };
+  cache.put('sb_token', JSON.stringify(tok), 3000);
+  return tok;
+}
+
+// 레코드 1건 삽입. 이미 있으면(앱에서 처리·삭제한 것 포함) 건드리지 않는다.
+function cloudInsertRecord(collection, data) {
+  try {
+    const tok = cloudToken();
+    if (!tok) return false;
+    const row = { user_id: tok.user_id, collection: collection, biz_id: '', id: String(data.id), data: data,
+                  seq: Math.floor(Date.now() / 1000), deleted: false, device_id: 'gas' };
+    const res = UrlFetchApp.fetch(SB_URL + '/rest/v1/records?on_conflict=user_id,collection,biz_id,id', {
+      method: 'post', contentType: 'application/json',
+      headers: { apikey: SB_KEY, Authorization: 'Bearer ' + tok.access_token, Prefer: 'resolution=ignore-duplicates,return=minimal' },
+      payload: JSON.stringify([row]),
+      muteHttpExceptions: true
+    });
+    const code = res.getResponseCode();
+    if (code === 401) { CacheService.getScriptCache().remove('sb_token'); }
+    if (code < 200 || code >= 300) { Logger.log('서버 DB 반영 실패 ' + code + ': ' + res.getContentText().slice(0, 200)); return false; }
+    return true;
+  } catch (e) {
+    Logger.log('서버 DB 반영 오류: ' + e);
+    return false;
+  }
+}
+
+// 수동 점검용: Apps Script 편집기에서 이 함수를 실행하면 로그에 결과가 찍힌다
+function testCloudConnection() {
+  const tok = cloudToken();
+  Logger.log(tok ? '서버 로그인 성공 (user ' + tok.user_id + ')' : '서버 로그인 실패 — LEDGER_PIN 스크립트 속성 확인');
 }
 
 // 후보 행 추가 — 날짜 칸(2열)을 텍스트로 고정해 시트의 자동 날짜변환(시각 손실) 방지

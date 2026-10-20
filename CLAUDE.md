@@ -42,7 +42,7 @@ localStorage
 - 레코드 컬렉션: `CLOUD_RECORD_COLLECTIONS` (transactions/vendors/items/quotes/recurring/expense_candidates/deposits). 나머지 `acc_*`는 kv. `CLOUD_LOCAL_ONLY` 키는 기기 전용.
 - 시작: `cloudInit`(클라이언트 생성) → `lockInit` → 해제 시 `cloudAfterUnlock` → `cloudStart`(미전송분 push → `cloudPull`로 캐시 교체 → `reloadGlobalsFromLocal` → Realtime 구독 + 45초 주기 확인). 서버에 살아있는 레코드가 없으면 확인 후 로컬 전체 업로드.
 - 로그인 상태에서는 시트 autoSync(pull/충돌 모달) 비활성, 시트 백업은 force push 사본만. 복원류(스냅샷/최신찾기/되돌리기)는 reload 전 `cloudMarkAllDirty()` → 다음 시작 때 `cloudPushAll(true)`로 서버 전체 반영.
-- 모달 열린 중 수신 시 데이터만 갱신하고 화면은 `closeModal`에서 반영(`_cloudRenderPending`).
+- 수신 시 화면 갱신 정책(`cloudApplyRender`): 모달 열림·서류 작성 페이지 → 보류 후 닫기/이동 시 반영, 세금 분석 → 입력값 보존하고 재렌더 + `recalcTax`, 그 외 → 즉시 재렌더.
 
 ### 기기 간 동기화 규칙 — 시트 방식 (로그인 안 했을 때만, autoSyncFromSheets)
 - 시트 savedAt == 기준점 → 로컬 변경만 있으면 push
@@ -111,7 +111,8 @@ debounce(fn, ms)
 - actions: `ping`, `backupStorage`, `restoreStorage`, `getSavedAt`, `createSnapshot`, `listSnapshots`, `restoreSnapshot`, `askClaude`, `getExpenseCandidates`, `updateCandidateStatus`, `getDepositCandidates`, `updateDepositStatus`
 - `backupStorage`는 LockService로 직렬화. `expectSavedAt`(기기의 동기화 기준점)이 시트의 `acc_saved_at`과 다르면 `{conflict:true}`로 거부 (`force:true`면 덮어씀, `dryRun:true`면 검증만). `snapshot`: auto(10분 간격) | before(저장 전) | force(저장 후) | none
 - storage 시트 value 열은 텍스트 서식('@') 고정 — 날짜/수식 자동변환 방지
-- SMS 경로: MacroDroid → POST `{secret, source:'sms', receivedAt, body}` → GAS → sms_raw + expense_candidates 시트
+- SMS 경로: MacroDroid → POST `{secret, source:'sms', receivedAt, body}` → GAS → sms_raw + expense_candidates(또는 deposit_candidates) 시트 **+ 서버 DB 직접 삽입**(`cloudInsertRecord`: 공용 계정에 `LEDGER_PIN` 스크립트 속성으로 로그인 → `records`에 ignore-duplicates 삽입, 앱이 바꾼 상태를 되돌리지 않음). `testCloudConnection()`으로 점검.
+- 로그인 상태의 앱에서 시트 백업은 사본 역할. 사이드바 표기 '📄 시트 사본'.
 
 ## 구글 시트 자동 백업
 저장 함수 호출 시 3초 debounce → `runAutoSheetsBackup()` 자동 실행.
