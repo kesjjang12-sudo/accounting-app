@@ -46,16 +46,28 @@ function saveTransactions() { DB.save('acc_transactions', transactions);  schedu
 function saveCompanyInfo()  { DB.save('acc_company', companyInfo);        scheduleSheetsBackup(); }
 function saveQuotes()       { DB.save('acc_quotes', quotes);              scheduleSheetsBackup(); }
 
-// ── 자동 구글시트 백업 ────────────────────────────────────
+// ── 자동 구글시트 백업 / 기기 간 동기화 ────────────────────
+// 기준점(ledger_sync_base) = 이 기기가 마지막으로 시트와 일치했던 acc_saved_at.
+//   로컬 acc_saved_at ≠ 기준점 → 이 기기에 아직 안 올린 변경이 있음
+//   시트 savedAt   ≠ 기준점 → 다른 기기가 그 사이 저장함
+// 양쪽 다 바뀌었으면 자동으로 덮어쓰지 않고 사용자에게 묻는다.
 let _autoBackupTimer = null;
 let _backupDirty     = false;
+let _backupInFlight  = false;
+const SYNC_SKIP_KEYS = new Set(['acc_sheets_url', 'acc_sheets_key', 'acc_last_backup_at', 'acc_last_backup_ok']);
+
+function syncBase()         { return localStorage.getItem('ledger_sync_base') || ''; }
+function setSyncBase(v)     { localStorage.setItem('ledger_sync_base', v || ''); }
+function localSavedAt()     { return localStorage.getItem('acc_saved_at') || ''; }
+function hasUnsyncedLocal() { return localSavedAt() !== syncBase(); }
 
 function scheduleSheetsBackup() {
   if (!APPS_SCRIPT_URL || !SHEETS_SECRET) return;
   localStorage.setItem('acc_saved_at', new Date().toISOString());
+  localStorage.setItem('ledger_backup_pending', '1');
   _backupDirty = true;
   clearTimeout(_autoBackupTimer);
-  _autoBackupTimer = setTimeout(runAutoSheetsBackup, 3000);
+  _autoBackupTimer = setTimeout(() => runAutoSheetsBackup(), 3000);
 }
 
 function _collectAccStorage() {
@@ -67,63 +79,241 @@ function _collectAccStorage() {
   return storage;
 }
 
-// 탭을 닫아도 대기 중인 백업이 유실되지 않게 즉시 전송
-window.addEventListener('pagehide', () => {
-  if (!_backupDirty || !APPS_SCRIPT_URL || !navigator.sendBeacon) return;
-  clearTimeout(_autoBackupTimer);
-  navigator.sendBeacon(APPS_SCRIPT_URL, new Blob(
-    [JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', data: _collectAccStorage(), snapshot: 'none' })],
-    { type: 'text/plain' }));
-  _backupDirty = false;
-});
-
-// 시작 시 시트와 자동 동기화 — 다른 컴퓨터에서 저장한 최신 데이터를 자동 반영
-async function autoSyncFromSheets() {
-  if (!APPS_SCRIPT_URL || !SHEETS_SECRET) return;
-  try {
-    const res  = await fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'restoreStorage' })
-    });
-    const json = await res.json();
-    if (!json.success || !json.data || !Object.keys(json.data).length) return;
-    const remoteAt = json.data.acc_saved_at || '';
-    const localAt  = localStorage.getItem('acc_saved_at') || '';
-    if (!remoteAt || remoteAt <= localAt) return;
-    if (!localAt && transactions.length &&
-        !confirm('☁ 구글시트에 더 최신 데이터가 있습니다.\n이 컴퓨터의 데이터를 시트 데이터로 교체할까요?')) return;
-    Object.entries(json.data).forEach(([k, v]) => {
-      if (k === 'acc_sheets_url' || k === 'acc_sheets_key') return;
-      localStorage.setItem(k, v);
-    });
-    sessionStorage.setItem('acc_auto_synced', '1');
-    location.reload();
-  } catch {}
+async function gasPost(payload) {
+  const res  = await fetch(APPS_SCRIPT_URL, { method: 'POST', body: JSON.stringify({ secretKey: SHEETS_SECRET, ...payload }) });
+  const text = await res.text();
+  try { return JSON.parse(text); }
+  catch {
+    throw new Error('서버 응답이 JSON이 아닙니다 — GAS 배포의 "액세스: 모든 사용자" 설정과 URL을 확인하세요. 응답: ' + text.replace(/\s+/g, ' ').slice(0, 90));
+  }
 }
 
-async function runAutoSheetsBackup() {
+function fmtSyncAt(iso) {
+  if (!iso) return '기록 없음';
+  const d = new Date(iso);
+  if (isNaN(d)) return String(iso);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+// 어느 쪽이 최신인지 사람이 판단할 수 있게 거래 건수 / 가장 최근 거래일 요약
+function summarizeStorage(storage) {
+  let tx = 0, last = '';
+  Object.keys(storage || {}).forEach(k => {
+    if (!k.startsWith('acc_transactions')) return;
+    try { (JSON.parse(storage[k]) || []).forEach(t => { tx++; if (t && t.date > last) last = t.date; }); } catch {}
+  });
+  return { tx, last };
+}
+
+// 화면을 벗어날 때 대기 중인 백업 즉시 전송. 완료를 확인할 수 없으면 pending 플래그가 남아 다음 시작 때 재전송된다.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden' && _backupDirty && APPS_SCRIPT_URL) {
+    clearTimeout(_autoBackupTimer);
+    runAutoSheetsBackup({ silent: true });
+  }
+});
+window.addEventListener('pagehide', () => {
+  if (!_backupDirty || !APPS_SCRIPT_URL) return;
+  clearTimeout(_autoBackupTimer);
+  const body = JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', data: _collectAccStorage(), expectSavedAt: syncBase(), snapshot: 'none' });
+  let sent = false;
+  if (navigator.sendBeacon && body.length < 60000) {
+    try { sent = navigator.sendBeacon(APPS_SCRIPT_URL, new Blob([body], { type: 'text/plain' })); } catch {}
+  }
+  if (!sent) { try { fetch(APPS_SCRIPT_URL, { method: 'POST', body, keepalive: true }).catch(() => {}); } catch {} }
+});
+
+// 시트 데이터를 이 기기에 적용. 직전 상태는 ledger_prev_local 에 보관해 되돌릴 수 있게 한다.
+function applyRemoteData(data, mode) {
+  const cur = _collectAccStorage();
+  try { localStorage.setItem('ledger_prev_local', JSON.stringify({ at: new Date().toISOString(), storage: cur })); } catch {}
+  Object.keys(cur).forEach(k => { if (!SYNC_SKIP_KEYS.has(k) && !(k in data)) localStorage.removeItem(k); });
+  Object.entries(data).forEach(([k, v]) => { if (!SYNC_SKIP_KEYS.has(k)) localStorage.setItem(k, v == null ? '' : String(v)); });
+  setSyncBase(data.acc_saved_at || '');
+  localStorage.removeItem('ledger_backup_pending');
+  sessionStorage.setItem('acc_auto_synced', mode || 'auto');
+  location.reload();
+}
+
+// 시작 시 동기화 — 기준점과 비교해 안전한 방향으로만 자동 처리
+async function autoSyncFromSheets() {
+  if (!APPS_SCRIPT_URL || !SHEETS_SECRET) { ensureDefaultStamp(); return; }
+  try {
+    const info = await gasPost({ action: 'getSavedAt' });
+    if (!info.success) { setBackupStatus(false, info.message || '시트 상태 확인 실패'); return; }
+    const remoteAt = info.savedAt || '';
+    const localAt  = localSavedAt();
+    const base     = syncBase();
+    const remoteChanged = remoteAt !== base;
+    const localChanged  = localAt  !== base;
+
+    if (!remoteChanged) {
+      if (!localAt && !transactions.length && info.keys > 0) {
+        const json = await gasPost({ action: 'restoreStorage' });
+        if (json.success && json.data && Object.keys(json.data).length) { applyRemoteData(json.data, 'auto'); return; }
+      } else if (localChanged || localStorage.getItem('ledger_backup_pending')) {
+        await runAutoSheetsBackup({ silent: true });
+      }
+      return;
+    }
+    if (!remoteAt && !(info.keys > 0)) {
+      if (localChanged) await runAutoSheetsBackup({ silent: true });
+      return;
+    }
+    if (!localChanged) {
+      const json = await gasPost({ action: 'restoreStorage' });
+      if (json.success && json.data && Object.keys(json.data).length) { applyRemoteData(json.data, 'auto'); return; }
+      return;
+    }
+    openSyncConflictModal(remoteAt, info);
+  } catch (e) {
+    setBackupStatus(false, e.message);
+  } finally {
+    ensureDefaultStamp();
+  }
+}
+
+async function runAutoSheetsBackup(opts = {}) {
+  if (!APPS_SCRIPT_URL || !SHEETS_SECRET) return false;
+  if (_backupInFlight) { _backupDirty = true; return false; }
+  _backupInFlight = true;
   _backupDirty = false;
   const storage = _collectAccStorage();
+  const sentAt  = storage.acc_saved_at || '';
+  let ok = false;
   try {
-    const res  = await fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', data: storage })
-    });
-    const json = await res.json();
-    if (json.success) { showSheetsBackupStatus('☁ 자동 백업 완료', 'success'); setBackupStatus(true); }
-    else              { showSheetsBackupStatus('☁ 백업 실패', 'error');      setBackupStatus(false); }
-  } catch {
-    showSheetsBackupStatus('☁ 백업 실패 (연결 오류)', 'error');
-    setBackupStatus(false);
+    const json = await gasPost({ action: 'backupStorage', data: storage, expectSavedAt: syncBase(), force: !!opts.force, snapshot: opts.snapshot || 'auto' });
+    if (json.success) {
+      setSyncBase(sentAt);
+      localStorage.removeItem('ledger_backup_pending');
+      setBackupStatus(true);
+      if (!opts.silent) showSheetsBackupStatus(opts.doneMsg || '☁ 자동 백업 완료', 'success');
+      ok = true;
+    } else if (json.conflict) {
+      localStorage.setItem('ledger_backup_pending', '1');
+      setBackupStatus(false, '다른 기기에서 먼저 저장함 — 어느 쪽을 남길지 선택 필요');
+      openSyncConflictModal(json.remoteSavedAt || '', json);
+    } else {
+      setBackupStatus(false, json.message || '알 수 없는 오류');
+      showSheetsBackupStatus('☁ 백업 실패: ' + (json.message || '알 수 없는 오류'), 'error');
+    }
+  } catch (e) {
+    setBackupStatus(false, e.message);
+    showSheetsBackupStatus('☁ 백업 실패: ' + e.message, 'error');
+  } finally {
+    _backupInFlight = false;
+    if (_backupDirty) { clearTimeout(_autoBackupTimer); _autoBackupTimer = setTimeout(() => runAutoSheetsBackup(), 1500); }
   }
+  return ok;
+}
+
+let _conflictOpenFor = null;
+function openSyncConflictModal(remoteAt, info) {
+  const key = remoteAt + '|' + localSavedAt();
+  if (_conflictOpenFor === key && document.getElementById('sync-conflict')) return;
+  _conflictOpenFor = key;
+  const loc = summarizeStorage(_collectAccStorage());
+  const rem = info && info.tx != null ? info : null;
+  const row = (l, a, b) => `<tr><td style="color:var(--gray-500)">${l}</td><td>${a}</td><td>${b}</td></tr>`;
+  openModal('⚠ 어느 쪽 데이터를 남길까요?', `<div id="sync-conflict">
+    <p style="font-size:13px;line-height:1.7;margin-bottom:10px">이 기기와 구글시트(다른 기기) <b>양쪽에 서로 다른 변경</b>이 있어 자동으로 덮어쓰지 않았습니다. 거래 건수와 최근 거래일을 보고 최신 쪽을 고르세요.</p>
+    <div class="table-wrapper"><table><thead><tr><th></th><th>💻 이 기기</th><th>☁ 구글시트</th></tr></thead><tbody>
+      ${row('마지막 저장', fmtSyncAt(localSavedAt()), fmtSyncAt(remoteAt))}
+      ${row('거래 건수', `<b>${loc.tx}건</b>`, rem ? `<b>${rem.tx}건</b>` : '-')}
+      ${row('가장 최근 거래일', loc.last || '-', rem ? (rem.last || '-') : '-')}
+    </tbody></table></div>
+    <div style="font-size:12px;color:var(--gray-500);margin:8px 0 14px">마지막으로 양쪽이 일치했던 시점: ${fmtSyncAt(syncBase())}</div>
+    <div style="display:flex;flex-direction:column;gap:8px">
+      <button class="btn btn-primary" onclick="syncPullNow()">☁ 구글시트 데이터로 맞추기<div style="font-size:11px;font-weight:400;opacity:.85">이 기기의 현재 상태는 '복원 직전 상태'로 보관됩니다 (⚙ 시트설정에서 되돌리기)</div></button>
+      <button class="btn btn-ghost" onclick="syncPushForce()">💻 이 기기 데이터로 시트 덮어쓰기<div style="font-size:11px;font-weight:400;opacity:.85">시트의 현재 상태는 스냅샷으로 보관됩니다 (↩ 되돌리기)</div></button>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal()">나중에 결정 (결정 전까지 이 기기는 백업되지 않습니다)</button>
+    </div></div>`);
+}
+
+async function syncPullNow() {
+  try {
+    const json = await gasPost({ action: 'restoreStorage' });
+    if (!json.success || !json.data || !Object.keys(json.data).length) { alert('시트에 데이터가 없습니다.'); return; }
+    applyRemoteData(json.data, 'pull');
+  } catch (e) { alert('연결 오류: ' + e.message); }
+}
+
+async function syncPushForce() {
+  if (!confirm('시트(다른 기기)의 데이터를 이 기기 데이터로 덮어씁니다.\n시트의 직전 상태는 스냅샷으로 남습니다. 계속할까요?')) return;
+  closeModal();
+  _conflictOpenFor = null;
+  const ok = await runAutoSheetsBackup({ force: true, snapshot: 'before', doneMsg: '☁ 이 기기 데이터로 시트를 덮어썼습니다' });
+  if (ok) alert('완료. 다른 기기는 다음에 열 때 이 데이터를 자동으로 받습니다.');
+}
+
+function undoLastPull() {
+  const raw = localStorage.getItem('ledger_prev_local');
+  if (!raw) { alert('보관된 "복원 직전 상태"가 없습니다.'); return; }
+  let saved;
+  try { saved = JSON.parse(raw); } catch { alert('보관 데이터를 읽을 수 없습니다.'); return; }
+  const s = summarizeStorage(saved.storage);
+  if (!confirm(`복원 직전 상태(${fmtSyncAt(saved.at)} · 거래 ${s.tx}건 · 최근 거래일 ${s.last || '-'})로 이 기기를 되돌립니다.\n현재 상태는 다시 "복원 직전 상태"로 보관됩니다. 계속할까요?`)) return;
+  const cur = _collectAccStorage();
+  Object.keys(cur).forEach(k => { if (!SYNC_SKIP_KEYS.has(k)) localStorage.removeItem(k); });
+  Object.entries(saved.storage || {}).forEach(([k, v]) => { if (!SYNC_SKIP_KEYS.has(k)) localStorage.setItem(k, v == null ? '' : String(v)); });
+  try { localStorage.setItem('ledger_prev_local', JSON.stringify({ at: new Date().toISOString(), storage: cur })); } catch {}
+  localStorage.setItem('acc_saved_at', new Date().toISOString());
+  localStorage.setItem('ledger_backup_pending', '1');
+  sessionStorage.setItem('acc_auto_synced', 'undo');
+  location.reload();
+}
+
+async function openBackupDiagnostics() {
+  const storage = _collectAccStorage();
+  const body = JSON.stringify(storage);
+  const loc = summarizeStorage(storage);
+  let biggest = '', bsz = 0;
+  Object.entries(storage).forEach(([k, v]) => { const n = (v || '').length; if (n > bsz) { bsz = n; biggest = k; } });
+  const url = APPS_SCRIPT_URL || '';
+  const m = url.match(/\/s\/([^/]+)\//);
+  const lines = [
+    `GAS URL: ${url ? url.slice(0, 38) + '…' + url.slice(-10) : '(미설정)'}  · 배포ID 끝: ${m ? m[1].slice(-8) : '-'}  · Secret: ${SHEETS_SECRET ? '있음' : '없음'}`,
+    `이 기기 마지막 저장: ${fmtSyncAt(localSavedAt())}  · 동기화 기준점: ${fmtSyncAt(syncBase())}  · 미전송 변경: ${hasUnsyncedLocal() ? '있음' : '없음'}`,
+    `이 기기 데이터: 거래 ${loc.tx}건 · 최근 거래일 ${loc.last || '-'} · 항목 ${Object.keys(storage).length}개 · 전송 크기 ${(body.length / 1024).toFixed(0)}KB (최대 항목 ${biggest} ${(bsz / 1024).toFixed(0)}KB)`,
+    `마지막 백업 시도: ${fmtSyncAt(localStorage.getItem('acc_last_backup_at'))} · 결과: ${localStorage.getItem('acc_last_backup_ok') === '0' ? '실패' : '성공'}`,
+  ];
+  const err = localStorage.getItem('ledger_last_backup_err');
+  if (err) lines.push(`마지막 오류: ${err}`);
+  const prev = localStorage.getItem('ledger_prev_local');
+  if (prev) { try { const p = JSON.parse(prev), ps = summarizeStorage(p.storage); lines.push(`복원 직전 상태 보관: ${fmtSyncAt(p.at)} · 거래 ${ps.tx}건 · 최근 ${ps.last || '-'}`); } catch {} }
+  lines.push(`브라우저: ${navigator.userAgent.slice(0, 90)}`);
+  openModal('🩺 백업 진단', `
+    <pre id="diag-out" style="white-space:pre-wrap;word-break:break-all;font-size:12px;line-height:1.6;background:var(--gray-50);padding:12px;border-radius:8px;margin:0 0 12px">${docEsc(lines.join('\n'))}\n\n서버 확인 중…</pre>
+    <div class="modal-footer">
+      <button class="btn btn-ghost" onclick="closeModal()">닫기</button>
+      <button class="btn btn-primary" onclick="htCopy(document.getElementById('diag-out').textContent)">📋 결과 복사</button>
+    </div>`);
+  const out = () => document.getElementById('diag-out');
+  if (!url) { if (out()) out().textContent = lines.join('\n') + '\n\n시트 URL이 설정되지 않았습니다.'; return; }
+  const t0 = Date.now();
+  try {
+    const p = await gasPost({ action: 'ping' });
+    lines.push('', `서버 ping: ${p.success ? '정상' : '실패 ' + (p.message || '')} (${Date.now() - t0}ms)`);
+    const info = await gasPost({ action: 'getSavedAt' });
+    if (info.success) lines.push(`시트 데이터: 거래 ${info.tx}건 · 최근 거래일 ${info.last || '-'} · 마지막 저장 ${fmtSyncAt(info.savedAt)} · 시트 갱신 ${fmtSyncAt(info.updatedAt)} · 항목 ${info.keys}개`);
+    else lines.push(`시트 상태 확인 실패: ${info.message || ''}`);
+    const snaps = await gasPost({ action: 'listSnapshots' });
+    if (snaps.success) lines.push(`스냅샷 ${(snaps.snapshots || []).length}개` + (snaps.snapshots || []).slice(0, 5).map(s => `\n  · ${fmtSyncAt(s.time)} 거래 ${s.txCount}건`).join(''));
+    const t1 = Date.now();
+    const dry = await gasPost({ action: 'backupStorage', data: storage, expectSavedAt: syncBase(), dryRun: true });
+    lines.push(`쓰기 테스트(실제 저장 안 함): ${dry.success ? `정상 — ${dry.rows}행 (${Date.now() - t1}ms)` : dry.conflict ? '충돌 — 시트에 다른 기기의 더 최신 저장이 있음' : '실패: ' + (dry.message || '')}`);
+  } catch (e) { lines.push('', `서버 오류: ${e.message}`); }
+  if (out()) out().textContent = lines.join('\n');
 }
 
 function pad2(n) { return String(n).padStart(2, '0'); }
 
 // 마지막 백업 시각/성공여부 기록 + 사이드바 상시 표시 갱신
-function setBackupStatus(ok) {
+function setBackupStatus(ok, err) {
   localStorage.setItem('acc_last_backup_at', new Date().toISOString());
   localStorage.setItem('acc_last_backup_ok', ok ? '1' : '0');
+  if (ok) localStorage.removeItem('ledger_last_backup_err');
+  else    localStorage.setItem('ledger_last_backup_err', String(err || '').slice(0, 300));
   renderBackupStatus();
 }
 
@@ -134,19 +324,23 @@ function renderBackupStatus() {
     el.innerHTML = '<span style="color:#94a3b8">☁ 백업 미설정 (⚙ 시트설정)</span>';
     return;
   }
-  const at = localStorage.getItem('acc_last_backup_at');
+  const at  = localStorage.getItem('acc_last_backup_at');
+  const ok  = localStorage.getItem('acc_last_backup_ok') !== '0';
+  const err = localStorage.getItem('ledger_last_backup_err') || '';
+  if (!ok) {
+    el.innerHTML = `<span style="color:#f87171;font-weight:600;cursor:pointer" onclick="openBackupDiagnostics()" title="${docEsc(err)}">⚠ 백업 실패 — ${docEsc(err.slice(0, 40))}${err.length > 40 ? '…' : ''}<br><span style="font-weight:400;color:#fca5a5">클릭하면 진단</span></span>`;
+    return;
+  }
   if (!at) { el.innerHTML = '<span style="color:#94a3b8">☁ 백업 대기중…</span>'; return; }
-  const ok = localStorage.getItem('acc_last_backup_ok') !== '0';
   const d  = new Date(at);
   const hm = pad2(d.getHours()) + ':' + pad2(d.getMinutes());
   const stale = (Date.now() - d.getTime()) > 24 * 60 * 60 * 1000;
-  if (!ok) {
-    el.innerHTML = '<span style="color:#f87171;font-weight:600">⚠ 백업 실패 — 확인 필요</span>';
-  } else if (stale) {
+  const pend  = hasUnsyncedLocal() ? ' <span style="color:#fbbf24">· 전송 대기</span>' : '';
+  if (stale) {
     const md = pad2(d.getMonth() + 1) + '/' + pad2(d.getDate());
-    el.innerHTML = '<span style="color:#fbbf24">☁ 마지막 백업 ' + md + ' ' + hm + ' (오래됨)</span>';
+    el.innerHTML = '<span style="color:#fbbf24">☁ 마지막 백업 ' + md + ' ' + hm + ' (오래됨)</span>' + pend;
   } else {
-    el.innerHTML = '<span style="color:#4ade80">☁ 마지막 백업 ' + hm + ' ✓</span>';
+    el.innerHTML = '<span style="color:#4ade80">☁ 마지막 백업 ' + hm + ' ✓</span>' + pend;
   }
 }
 
@@ -174,21 +368,15 @@ let SHEETS_SECRET   = localStorage.getItem('acc_sheets_key') || '';
 
 async function backupToSheets() {
   if (!APPS_SCRIPT_URL) { openSheetsConfig(); return; }
-  localStorage.setItem('acc_saved_at', new Date().toISOString());
-  const storage = _collectAccStorage();
+  if (!hasUnsyncedLocal()) {
+    if (!confirm('이 기기의 데이터는 이미 시트와 같습니다. 그래도 다시 올릴까요?')) return;
+    localStorage.setItem('acc_saved_at', new Date().toISOString());
+  }
   const btn = document.getElementById('sheets-backup-btn');
   if (btn) { btn.disabled = true; btn.textContent = '백업 중...'; }
   try {
-    const res  = await fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', data: storage })
-    });
-    const json = await res.json();
-    if (json.success) { setBackupStatus(true);  alert(`☁ 구글시트 백업 완료!\n${Object.keys(storage).length}개 항목 저장됨`); }
-    else              { setBackupStatus(false); alert('백업 실패: ' + (json.message || '알 수 없는 오류')); }
-  } catch (err) {
-    setBackupStatus(false);
-    alert('연결 오류: ' + err.message + '\n\nURL이 올바른지 확인하세요.');
+    const ok = await runAutoSheetsBackup({ doneMsg: '☁ 구글시트 백업 완료' });
+    if (ok) alert('☁ 구글시트 백업 완료!');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '☁ 시트백업'; }
   }
@@ -197,24 +385,11 @@ async function backupToSheets() {
 // ── 안전저장(수동 스냅샷) / 되돌리기(스냅샷 복원) ─────────
 async function snapshotNow() {
   if (!APPS_SCRIPT_URL) { openSheetsConfig(); return; }
-  const storage = {};
-  for (let i = 0; i < localStorage.length; i++) {
-    const key = localStorage.key(i);
-    if (key.startsWith('acc_') || key === '_biz_migrated') storage[key] = localStorage.getItem(key);
-  }
   const btn = document.getElementById('snapshot-btn');
   if (btn) { btn.disabled = true; btn.textContent = '저장 중...'; }
   try {
-    const res  = await fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'backupStorage', snapshot: 'force', data: storage })
-    });
-    const json = await res.json();
-    if (json.success) { setBackupStatus(true);  alert('🛟 안전저장 완료!\n현재 상태가 스냅샷으로 보관됐어요.\n(나중에 ↩ 되돌리기에서 이 시점으로 복원 가능)'); }
-    else              { setBackupStatus(false); alert('안전저장 실패: ' + (json.message || '오류')); }
-  } catch (err) {
-    setBackupStatus(false);
-    alert('연결 오류: ' + err.message);
+    const ok = await runAutoSheetsBackup({ snapshot: 'force', doneMsg: '🛟 안전저장 완료' });
+    if (ok) alert('🛟 안전저장 완료!\n현재 상태가 스냅샷으로 보관됐어요.\n(나중에 ↩ 되돌리기에서 이 시점으로 복원 가능)');
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '🛟 안전저장'; }
   }
@@ -250,22 +425,19 @@ async function openSnapshotsModal() {
 }
 
 async function restoreSnapshotById(id) {
-  if (!confirm('이 시점으로 되돌립니다.\n⚠ 현재 데이터는 모두 덮어쓰기 됩니다.\n계속할까요?')) return;
+  if (!confirm('이 시점으로 되돌립니다.\n⚠ 이 기기와 구글시트 모두 이 시점 데이터로 바뀝니다.\n(시트의 현재 상태는 스냅샷으로, 이 기기의 현재 상태는 "복원 직전 상태"로 보관)\n계속할까요?')) return;
   try {
-    const res  = await fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'restoreSnapshot', id })
-    });
-    const json = await res.json();
-    if (json.success && json.data) {
-      const count = Object.keys(json.data).length;
-      if (!count) { alert('스냅샷이 비어있습니다.'); return; }
-      Object.entries(json.data).forEach(([k, v]) => localStorage.setItem(k, v));
-      alert(`↩ 복원 완료! ${count}개 항목을 불러왔습니다.\n앱을 새로고침합니다.`);
-      location.reload();
-    } else {
-      alert('복원 실패: ' + (json.message || '오류'));
-    }
+    const json = await gasPost({ action: 'restoreSnapshot', id });
+    if (!(json.success && json.data && Object.keys(json.data).length)) { alert('복원 실패: ' + (json.message || '스냅샷이 비어있습니다')); return; }
+    const cur = _collectAccStorage();
+    try { localStorage.setItem('ledger_prev_local', JSON.stringify({ at: new Date().toISOString(), storage: cur })); } catch {}
+    Object.keys(cur).forEach(k => { if (!SYNC_SKIP_KEYS.has(k)) localStorage.removeItem(k); });
+    Object.entries(json.data).forEach(([k, v]) => { if (!SYNC_SKIP_KEYS.has(k)) localStorage.setItem(k, v == null ? '' : String(v)); });
+    localStorage.setItem('acc_saved_at', new Date().toISOString());
+    const ok = await runAutoSheetsBackup({ force: true, snapshot: 'before', silent: true });
+    if (!ok) localStorage.setItem('ledger_backup_pending', '1');
+    sessionStorage.setItem('acc_auto_synced', 'snapshot');
+    location.reload();
   } catch (err) {
     alert('연결 오류: ' + err.message);
   }
@@ -273,29 +445,34 @@ async function restoreSnapshotById(id) {
 
 async function restoreFromSheets() {
   if (!APPS_SCRIPT_URL) { openSheetsConfig(); return; }
-  if (!confirm('구글시트에서 데이터를 불러옵니다.\n⚠ 기존 데이터가 모두 덮어쓰기 됩니다.\n계속할까요?')) return;
   const btn = document.getElementById('sheets-restore-btn');
-  if (btn) { btn.disabled = true; btn.textContent = '불러오는 중...'; }
+  if (btn) { btn.disabled = true; btn.textContent = '확인 중...'; }
   try {
-    const res  = await fetch(APPS_SCRIPT_URL, {
-      method: 'POST',
-      body: JSON.stringify({ secretKey: SHEETS_SECRET, action: 'restoreStorage' })
-    });
-    const json = await res.json();
-    if (json.success && json.data) {
-      const count = Object.keys(json.data).length;
-      if (!count) { alert('구글시트에 저장된 데이터가 없습니다.'); return; }
-      Object.entries(json.data).forEach(([k, v]) => localStorage.setItem(k, v));
-      alert(`☁ 복원 완료! ${count}개 항목 불러왔습니다.\n앱을 새로고침합니다.`);
-      location.reload();
-    } else {
-      alert('불러오기 실패: ' + (json.message || '알 수 없는 오류'));
-    }
+    const json = await gasPost({ action: 'restoreStorage' });
+    if (!json.success || !json.data || !Object.keys(json.data).length) { alert('구글시트에 저장된 데이터가 없습니다.'); return; }
+    const rem = summarizeStorage(json.data), loc = summarizeStorage(_collectAccStorage());
+    const remoteAt = json.data.acc_saved_at || '';
+    const older = remoteAt && localSavedAt() && remoteAt < localSavedAt();
+    let msg = '구글시트 데이터로 이 기기를 덮어씁니다.\n\n'
+      + `☁ 시트:    거래 ${rem.tx}건 · 최근 거래일 ${rem.last || '-'} · 저장 ${fmtSyncAt(remoteAt)}\n`
+      + `💻 이 기기: 거래 ${loc.tx}건 · 최근 거래일 ${loc.last || '-'} · 저장 ${fmtSyncAt(localSavedAt())}\n`;
+    if (older)          msg += '\n⚠ 시트 데이터가 이 기기보다 오래됐습니다! 불러오면 이 기기의 최신 내용이 사라집니다.\n';
+    if (rem.tx < loc.tx) msg += `\n⚠ 시트의 거래 건수(${rem.tx})가 이 기기(${loc.tx})보다 적습니다.\n`;
+    msg += '\n이 기기의 현재 상태는 "복원 직전 상태"로 보관되어 ⚙ 시트설정에서 되돌릴 수 있습니다.\n\n계속할까요?';
+    if (!confirm(msg)) return;
+    applyRemoteData(json.data, 'pull');
   } catch (err) {
     alert('연결 오류: ' + err.message);
   } finally {
     if (btn) { btn.disabled = false; btn.textContent = '☁ 시트복원'; }
   }
+}
+
+function _prevLocalBtn() {
+  const raw = localStorage.getItem('ledger_prev_local');
+  if (!raw) return '';
+  try { const p = JSON.parse(raw), ps = summarizeStorage(p.storage);
+    return `<button class="btn btn-ghost btn-sm" onclick="undoLastPull()" title="복원·동기화로 덮어쓰기 전의 이 기기 데이터">↩ 복원 직전 상태로 되돌리기 (${fmtSyncAt(p.at)} · 거래 ${ps.tx}건)</button>`; } catch { return ''; }
 }
 
 function openSheetsConfig() {
@@ -311,6 +488,10 @@ function openSheetsConfig() {
     <div class="form-group" style="margin-bottom:14px">
       <label>Secret Key (Code.gs의 SECRET_KEY와 동일)</label>
       <input id="cfg-key" class="form-control" placeholder="my-secret-key-1234" value="${SHEETS_SECRET}">
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px">
+      <button class="btn btn-ghost btn-sm" onclick="openBackupDiagnostics()">🩺 백업 진단</button>
+      ${_prevLocalBtn()}
     </div>
     <div class="modal-footer">
       <button class="btn btn-ghost" onclick="closeModal()">취소</button>
@@ -7026,10 +7207,13 @@ document.addEventListener('DOMContentLoaded', () => {
   renderSidebarBiz();
   render('home');
   renderBackupStatus();
-  ensureDefaultStamp();
-  if (sessionStorage.getItem('acc_auto_synced')) {
+  const synced = sessionStorage.getItem('acc_auto_synced');
+  if (synced) {
     sessionStorage.removeItem('acc_auto_synced');
-    showSheetsBackupStatus('☁ 다른 기기의 변경사항을 불러왔습니다', 'success');
+    const msg = { undo: '↩ 복원 직전 상태로 되돌렸습니다', pull: '☁ 구글시트 데이터로 맞췄습니다', snapshot: '↩ 스냅샷 시점으로 되돌렸습니다' }[synced] || '☁ 다른 기기의 변경사항을 불러왔습니다';
+    showSheetsBackupStatus(msg, 'success');
+    ensureDefaultStamp();
+    if (localStorage.getItem('ledger_backup_pending')) runAutoSheetsBackup({ silent: true });
   } else {
     autoSyncFromSheets();
   }

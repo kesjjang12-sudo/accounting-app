@@ -21,7 +21,19 @@ localStorage
   acc_merchant_cats         → 가맹점→카테고리 학습맵 (공유, DBshared)
   acc_sheets_url            → GAS 웹앱 URL
   acc_sheets_key            → GAS Secret Key (현재: a4463116!)
+  acc_saved_at              → 마지막 저장 시각 (백업에 포함되어 시트의 버전 표식 역할)
+  ledger_sync_base          → 이 기기가 마지막으로 시트와 일치했던 acc_saved_at (기기별, 백업 제외)
+  ledger_prev_local         → 복원/동기화로 덮어쓰기 직전의 로컬 상태 (되돌리기용, 백업 제외)
+  ledger_backup_pending     → 미전송 변경 플래그 (다음 시작 시 재전송)
+  ht_template_b64           → 홈택스 일괄발급 양식 (기기별, 백업 제외)
 ```
+※ `acc_` 접두사 키만 시트에 백업된다. 기기 고유 상태는 `ledger_`/`ht_` 접두사를 쓴다.
+
+### 기기 간 동기화 규칙 (autoSyncFromSheets)
+- 시트 savedAt == 기준점 → 로컬 변경만 있으면 push
+- 시트 savedAt != 기준점 이고 로컬 변경 없음 → 시트 데이터 pull (직전 상태는 ledger_prev_local 보관)
+- 양쪽 다 변경 → 자동 처리 금지, openSyncConflictModal로 거래 건수·최근 거래일을 보여주고 사용자가 선택
+- 저장 함수는 scheduleSheetsBackup → 3초 후 runAutoSheetsBackup. 화면 이탈(visibilitychange hidden) 시 즉시 전송
 
 ### 헬퍼
 ```js
@@ -81,7 +93,9 @@ debounce(fn, ms)
 - `SECRET_KEY = SMS_SECRET = 'a4463116!'`
 - `BUSINESS_CARDS = ['롯데카드']` → pending 후보 등록
 - `PERSONAL_CARDS = ['현대카드']` → excluded 기록
-- actions: `ping`, `backupStorage`, `restoreStorage`, `getExpenseCandidates`, `updateCandidateStatus`
+- actions: `ping`, `backupStorage`, `restoreStorage`, `getSavedAt`, `createSnapshot`, `listSnapshots`, `restoreSnapshot`, `askClaude`, `getExpenseCandidates`, `updateCandidateStatus`, `getDepositCandidates`, `updateDepositStatus`
+- `backupStorage`는 LockService로 직렬화. `expectSavedAt`(기기의 동기화 기준점)이 시트의 `acc_saved_at`과 다르면 `{conflict:true}`로 거부 (`force:true`면 덮어씀, `dryRun:true`면 검증만). `snapshot`: auto(10분 간격) | before(저장 전) | force(저장 후) | none
+- storage 시트 value 열은 텍스트 서식('@') 고정 — 날짜/수식 자동변환 방지
 - SMS 경로: MacroDroid → POST `{secret, source:'sms', receivedAt, body}` → GAS → sms_raw + expense_candidates 시트
 
 ## 구글 시트 자동 백업

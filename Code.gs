@@ -81,16 +81,43 @@ function doPost(e) {
       if (!payload.data || typeof payload.data !== 'object') {
         return respond({ success: false, message: 'data 필드가 없거나 잘못된 형식입니다.' });
       }
-      const mode = payload.snapshot || 'auto';   // 'auto' | 'force' | 'none'
-      if (mode === 'auto') maybeAutoSnapshot();   // 덮어쓰기 전 상태를 10분 간격으로 보관
-      saveStorage(payload.data);
-      if (mode === 'force') createSnapshot();      // 수동: 방금 저장한 현재 상태 보관
-      return respond({ success: true, count: Object.keys(payload.data).length });
+      // 기기 간 동시 저장이 섞이지 않도록 직렬화
+      var lock = LockService.getScriptLock();
+      try { lock.waitLock(30000); }
+      catch (lockErr) { return respond({ success: false, message: '다른 기기가 저장 중입니다. 잠시 후 자동으로 다시 시도합니다.' }); }
+      try {
+        var current  = loadStorage();
+        var storedAt = String(current.acc_saved_at || '');
+        var incoming = String(payload.data.acc_saved_at || '');
+        var expect   = (payload.expectSavedAt == null) ? null : String(payload.expectSavedAt);
+        // 보낸 기기가 마지막으로 본 시트 상태(expect)와 현재 시트가 다르면 → 다른 기기가 먼저 저장한 것 → 덮어쓰지 않음
+        if (!payload.force && expect !== null && storedAt && storedAt !== expect && storedAt !== incoming) {
+          var sm = summarizeStorage(current);
+          return respond({ success: false, conflict: true, remoteSavedAt: storedAt, tx: sm.tx, last: sm.last, message: '다른 기기에서 먼저 저장했습니다.' });
+        }
+        var stats = storageStats(payload.data);
+        if (payload.dryRun) return respond({ success: true, dryRun: true, rows: stats.rows, keys: stats.keys, chars: stats.chars });
+        var mode = payload.snapshot || 'auto';   // 'auto' | 'before' | 'force' | 'none'
+        if (mode === 'auto')   { try { maybeAutoSnapshot(); } catch (e1) { Logger.log('auto snapshot skipped: ' + e1); } }
+        if (mode === 'before') { try { createSnapshot(); }    catch (e2) { Logger.log('before snapshot skipped: ' + e2); } }
+        saveStorage(payload.data);
+        if (mode === 'force')  { try { createSnapshot(); }    catch (e3) { Logger.log('force snapshot skipped: ' + e3); } }
+        return respond({ success: true, count: stats.keys, rows: stats.rows, savedAt: incoming });
+      } finally {
+        lock.releaseLock();
+      }
     }
 
     if (payload.action === 'restoreStorage') {
-      const data = loadStorage();
-      return respond({ success: true, data });
+      var rdata = loadStorage();
+      var rs = summarizeStorage(rdata);
+      return respond({ success: true, data: rdata, savedAt: String(rdata.acc_saved_at || ''), tx: rs.tx, last: rs.last });
+    }
+
+    if (payload.action === 'getSavedAt') {
+      var gdata = loadStorage();
+      var gs = summarizeStorage(gdata);
+      return respond({ success: true, savedAt: String(gdata.acc_saved_at || ''), updatedAt: storageUpdatedAt(), keys: Object.keys(gdata).length, tx: gs.tx, last: gs.last });
     }
 
     if (payload.action === 'createSnapshot') {
@@ -184,8 +211,7 @@ function loadStorage() {
 }
 
 // key/value(+청크)를 시트에 통째로 다시 기록 (전체 스냅샷이 매번 전송되므로 clear & rewrite)
-function writeKvSheet(sheet, data) {
-  const now  = new Date().toISOString();
+function buildKvRows(data, now) {
   const rows = [];
   Object.keys(data).forEach(function (key) {
     var value = data[key];
@@ -200,9 +226,47 @@ function writeKvSheet(sheet, data) {
       }
     }
   });
+  return rows;
+}
+
+function storageStats(data) {
+  var chars = 0;
+  Object.keys(data).forEach(function (k) { chars += String(data[k] == null ? '' : data[k]).length; });
+  return { keys: Object.keys(data).length, rows: buildKvRows(data, '').length, chars: chars };
+}
+
+function writeKvSheet(sheet, data) {
+  const now  = new Date().toISOString();
+  const rows = buildKvRows(data, now);
   var lastRow = sheet.getLastRow();
   if (lastRow > 1) sheet.getRange(2, 1, lastRow - 1, 3).clearContent();
-  if (rows.length) sheet.getRange(2, 1, rows.length, 3).setValues(rows);
+  if (!rows.length) return;
+  if (sheet.getMaxRows() < rows.length + 1) sheet.insertRowsAfter(sheet.getMaxRows(), rows.length + 1 - sheet.getMaxRows());
+  // 값 칸을 '일반 텍스트'로 고정 — 시트가 날짜·숫자·수식으로 멋대로 바꿔 데이터가 깨지는 것을 방지
+  sheet.getRange(2, 2, rows.length, 1).setNumberFormat('@');
+  sheet.getRange(2, 1, rows.length, 3).setValues(rows);
+}
+
+function storageUpdatedAt() {
+  try {
+    var sheet = getStorageSheet();
+    if (sheet.getLastRow() <= 1) return '';
+    var v = sheet.getRange(2, 3).getValue();
+    return v instanceof Date ? v.toISOString() : String(v || '');
+  } catch (e) { return ''; }
+}
+
+// 거래 건수 / 가장 최근 거래일 — 어느 쪽 데이터가 최신인지 사람이 판단하기 위한 요약
+function summarizeStorage(data) {
+  var tx = 0, last = '';
+  Object.keys(data || {}).forEach(function (k) {
+    if (k.indexOf('acc_transactions') !== 0) return;
+    try {
+      var arr = JSON.parse(data[k]) || [];
+      arr.forEach(function (t) { tx++; if (t && t.date && t.date > last) last = t.date; });
+    } catch (e) {}
+  });
+  return { tx: tx, last: last };
 }
 
 // 시트 → key/value 객체 (청크 재조립)
