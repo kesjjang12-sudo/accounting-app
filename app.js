@@ -226,6 +226,7 @@ function openSyncConflictModal(remoteAt, info) {
     <div style="display:flex;flex-direction:column;gap:8px">
       <button class="btn btn-primary" onclick="syncPullNow()">☁ 구글시트 데이터로 맞추기<div style="font-size:11px;font-weight:400;opacity:.85">이 기기의 현재 상태는 '복원 직전 상태'로 보관됩니다 (⚙ 시트설정에서 되돌리기)</div></button>
       <button class="btn btn-ghost" onclick="syncPushForce()">💻 이 기기 데이터로 시트 덮어쓰기<div style="font-size:11px;font-weight:400;opacity:.85">시트의 현재 상태는 스냅샷으로 보관됩니다 (↩ 되돌리기)</div></button>
+      <button class="btn btn-ghost btn-sm" onclick="openLatestFinder()">🔎 어느 쪽이 최신인지 모르겠어요 — 전체 비교해서 찾기</button>
       <button class="btn btn-ghost btn-sm" onclick="closeModal()">나중에 결정 (결정 전까지 이 기기는 백업되지 않습니다)</button>
     </div></div>`);
 }
@@ -260,6 +261,135 @@ function undoLastPull() {
   localStorage.setItem('acc_saved_at', new Date().toISOString());
   localStorage.setItem('ledger_backup_pending', '1');
   sessionStorage.setItem('acc_auto_synced', 'undo');
+  location.reload();
+}
+
+
+// ── 최신 데이터 찾기 — 시트·스냅샷·이 기기·복원직전 상태를 모두 비교해 가장 최근 것을 고른다 ──
+// 결제완료는 거래 건수/날짜를 바꾸지 않으므로 paidAt·결제건수까지 '최근 활동' 지표에 포함한다.
+let _latestCands = [];
+
+function _dataMetrics(storage) {
+  let tx = 0, last = '', paid = 0, lastPaid = '', amount = 0;
+  Object.keys(storage || {}).forEach(k => {
+    if (!k.startsWith('acc_transactions')) return;
+    try {
+      (JSON.parse(storage[k]) || []).forEach(t => {
+        if (!t) return;
+        tx++;
+        if ((t.date || '') > last) last = t.date;
+        amount += (t.items || []).reduce((s, i) => s + (i.amount || 0) + (i.tax || 0), 0);
+        if (t.isPaid) { paid++; if ((t.paidAt || '') > lastPaid) lastPaid = t.paidAt || ''; }
+      });
+    } catch {}
+  });
+  const lastAny = last > lastPaid ? last : lastPaid;
+  return { tx, last, paid, lastPaid, lastAny, amount, savedAt: storage.acc_saved_at || '' };
+}
+
+function _vendorProbe(storage, q) {
+  const qn = String(q || '').replace(/\s/g, '').toLowerCase();
+  if (!qn) return null;
+  let vs = [];
+  try { vs = JSON.parse(storage.acc_vendors || '[]') || []; } catch {}
+  const vids = new Set(vs.filter(v => (v.companyName || '').replace(/\s/g, '').toLowerCase().includes(qn)).map(v => v.id));
+  let n = 0, paid = 0, lastPaid = '', unpaid = 0, lastDate = '';
+  Object.keys(storage || {}).forEach(k => {
+    if (!k.startsWith('acc_transactions')) return;
+    try {
+      (JSON.parse(storage[k]) || []).forEach(t => {
+        if (!t) return;
+        const hit = vids.has(t.vendorId) || (t.payeeName || '').replace(/\s/g, '').toLowerCase().includes(qn);
+        if (!hit) return;
+        n++;
+        if ((t.date || '') > lastDate) lastDate = t.date;
+        const amt = (t.items || []).reduce((s, i) => s + (i.amount || 0) + (i.tax || 0), 0);
+        if (t.isPaid) { paid++; if ((t.paidAt || '') > lastPaid) lastPaid = t.paidAt || ''; } else unpaid += amt;
+      });
+    } catch {}
+  });
+  return { n, paid, lastPaid, unpaid, lastDate };
+}
+
+function _rankCands(cands) {
+  return cands.slice().sort((a, b) =>
+    (b.m.lastAny || '').localeCompare(a.m.lastAny || '') ||
+    (b.m.paid - a.m.paid) || (b.m.tx - a.m.tx) ||
+    (b.m.savedAt || '').localeCompare(a.m.savedAt || ''));
+}
+
+async function openLatestFinder() {
+  if (!APPS_SCRIPT_URL || !SHEETS_SECRET) { openSheetsConfig(); return; }
+  openModal('🔎 최신 데이터 찾기', `<div id="lf-body" style="padding:16px;text-align:center;color:var(--gray-500)">데이터를 모으는 중… <span id="lf-prog"></span></div>`, true);
+  const prog = t => { const e = document.getElementById('lf-prog'); if (e) e.textContent = t; };
+  const cands = [];
+  const add = (label, kind, data, id) => { if (data && Object.keys(data).length) cands.push({ label, kind, data, id, m: _dataMetrics(data) }); };
+  add('💻 이 기기 (지금 상태)', 'local', _collectAccStorage());
+  try { const p = JSON.parse(localStorage.getItem('ledger_prev_local') || 'null'); if (p && p.storage) add(`↩ 복원 직전 상태 (${fmtSyncAt(p.at)})`, 'prev', p.storage); } catch {}
+  try {
+    prog('(시트)');
+    const cur = await gasPost({ action: 'restoreStorage' });
+    if (cur.success) add('☁ 구글시트 (현재)', 'sheet', cur.data);
+    const ls = await gasPost({ action: 'listSnapshots' });
+    const snaps = (ls.success && ls.snapshots) || [];
+    for (let i = 0; i < snaps.length; i++) {
+      prog(`(스냅샷 ${i + 1}/${snaps.length})`);
+      try { const r = await gasPost({ action: 'restoreSnapshot', id: snaps[i].id }); if (r.success) add(`📸 스냅샷 ${fmtSyncAt(snaps[i].time)}`, 'snap', r.data, snaps[i].id); } catch {}
+    }
+  } catch (e) {
+    const b = document.getElementById('lf-body');
+    if (b) b.innerHTML = `<div style="color:var(--danger)">서버 연결 오류: ${docEsc(e.message)}</div><div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">닫기</button></div>`;
+    return;
+  }
+  _latestCands = _rankCands(cands);
+  renderLatestFinder();
+}
+
+function renderLatestFinder() {
+  const body = document.getElementById('lf-body');
+  if (!body) return;
+  const q = document.getElementById('lf-q')?.value || window._lfQ || '';
+  window._lfQ = q;
+  const best = _latestCands[0];
+  const cards = _latestCands.map((c, i) => {
+    const m = c.m, pr = _vendorProbe(c.data, q);
+    const same = best && i > 0 && m.lastAny === best.m.lastAny && m.paid === best.m.paid && m.tx === best.m.tx && m.amount === best.m.amount;
+    return `<div class="card" style="margin-bottom:8px;${i === 0 ? 'border:2px solid var(--primary)' : ''}">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap">
+        <div style="font-weight:700">${c.label} ${i === 0 ? '<span class="badge" style="background:#dbeafe;color:#1d4ed8">가장 최근 (추천)</span>' : same ? '<span class="badge" style="background:#f3f4f6;color:#6b7280">추천과 동일 내용</span>' : ''}</div>
+        <button class="btn ${i === 0 ? 'btn-primary' : 'btn-ghost'} btn-sm" onclick="restoreCandidate(${i})">이 데이터로 복원</button>
+      </div>
+      <div style="font-size:12.5px;color:var(--gray-600);margin-top:6px;line-height:1.7">
+        거래 <b>${m.tx}</b>건 · 최근 거래일 <b>${m.last || '-'}</b> · 결제완료 <b>${m.paid}</b>건 (최근 결제일 ${m.lastPaid || '-'}) · 합계 ${fmt(m.amount)}원<br>
+        <span style="color:var(--gray-400)">저장 시각 ${fmtSyncAt(m.savedAt)}</span>
+        ${pr ? `<div style="margin-top:4px;padding:6px 8px;background:#fffbeb;border-radius:6px">"${docEsc(q)}" 거래 ${pr.n}건 · 결제완료 ${pr.paid}건${pr.lastPaid ? ` (최근 결제 ${pr.lastPaid})` : ''} · 미수 ${fmt(pr.unpaid)}원${pr.lastDate ? ` · 최근 거래 ${pr.lastDate}` : ''}</div>` : ''}
+      </div>
+    </div>`;
+  }).join('');
+  body.style.cssText = '';
+  body.innerHTML = `
+    <p style="font-size:12.5px;color:var(--gray-500);line-height:1.7;margin-bottom:10px">시트·스냅샷·이 기기 데이터를 모두 비교했습니다. <b>최근 거래일과 최근 결제일 중 늦은 쪽</b>, 결제완료 건수, 거래 건수 순으로 최신을 판단합니다. 특정 거래처의 입금이 반영된 버전을 찾으려면 아래에 거래처명을 입력하세요.</p>
+    <div class="filter-bar" style="margin-bottom:10px"><input id="lf-q" class="form-control search-input" placeholder="거래처명으로 확인 (예: 에이타워)" value="${docEsc(q)}" oninput="renderLatestFinder()"></div>
+    ${best ? `<button class="btn btn-primary" style="width:100%;margin-bottom:12px" onclick="restoreCandidate(0)">✅ 가장 최근 데이터로 복원 — ${best.label}</button>` : ''}
+    ${cards || '<div class="empty-state"><p>비교할 데이터가 없습니다</p></div>'}
+    <div class="modal-footer"><button class="btn btn-ghost" onclick="closeModal()">닫기</button></div>`;
+  const inp = document.getElementById('lf-q');
+  if (inp && q) { inp.focus(); inp.setSelectionRange(q.length, q.length); }
+}
+
+async function restoreCandidate(i) {
+  const c = _latestCands[i];
+  if (!c) return;
+  const m = c.m;
+  if (!confirm(`"${c.label}" 데이터로 이 기기와 구글시트를 모두 맞춥니다.\n\n거래 ${m.tx}건 · 최근 거래일 ${m.last || '-'} · 결제완료 ${m.paid}건 (최근 결제일 ${m.lastPaid || '-'})\n\n지금 이 기기 상태는 "복원 직전 상태"로, 지금 시트 상태는 스냅샷으로 보관됩니다. 계속할까요?`)) return;
+  const cur = _collectAccStorage();
+  try { localStorage.setItem('ledger_prev_local', JSON.stringify({ at: new Date().toISOString(), storage: cur })); } catch {}
+  Object.keys(cur).forEach(k => { if (!SYNC_SKIP_KEYS.has(k)) localStorage.removeItem(k); });
+  Object.entries(c.data).forEach(([k, v]) => { if (!SYNC_SKIP_KEYS.has(k)) localStorage.setItem(k, v == null ? '' : String(v)); });
+  localStorage.setItem('acc_saved_at', new Date().toISOString());
+  const ok = await runAutoSheetsBackup({ force: true, snapshot: 'before', silent: true });
+  if (!ok) localStorage.setItem('ledger_backup_pending', '1');
+  sessionStorage.setItem('acc_auto_synced', 'latest');
   location.reload();
 }
 
@@ -1748,6 +1878,7 @@ function renderHome(el) {
         <button id="snapshot-btn" class="btn btn-ghost btn-sm" onclick="snapshotNow()">🛟 안전저장</button>
         <button class="btn btn-ghost btn-sm" onclick="openSnapshotsModal()">↩ 되돌리기</button>
         <button id="sheets-restore-btn" class="btn btn-ghost btn-sm" onclick="restoreFromSheets()">☁ 시트복원</button>
+        <button class="btn btn-primary btn-sm" onclick="openLatestFinder()" title="시트·스냅샷·이 기기 데이터를 모두 비교해 가장 최근 것을 찾아 복원">🔎 최신 데이터 찾기</button>
         <button id="sheets-backup-btn"  class="btn btn-ghost btn-sm" onclick="backupToSheets()">☁ 시트백업</button>
         <button class="btn btn-ghost btn-sm" onclick="openSheetsConfig()">⚙ 시트설정</button>
         <span style="color:var(--gray-300);padding:0 2px">|</span>
@@ -7210,7 +7341,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const synced = sessionStorage.getItem('acc_auto_synced');
   if (synced) {
     sessionStorage.removeItem('acc_auto_synced');
-    const msg = { undo: '↩ 복원 직전 상태로 되돌렸습니다', pull: '☁ 구글시트 데이터로 맞췄습니다', snapshot: '↩ 스냅샷 시점으로 되돌렸습니다' }[synced] || '☁ 다른 기기의 변경사항을 불러왔습니다';
+    const msg = { undo: '↩ 복원 직전 상태로 되돌렸습니다', pull: '☁ 구글시트 데이터로 맞췄습니다', snapshot: '↩ 스냅샷 시점으로 되돌렸습니다', latest: '🔎 가장 최근 데이터로 복원했습니다' }[synced] || '☁ 다른 기기의 변경사항을 불러왔습니다';
     showSheetsBackupStatus(msg, 'success');
     ensureDefaultStamp();
     if (localStorage.getItem('ledger_backup_pending')) runAutoSheetsBackup({ silent: true });
