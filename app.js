@@ -15,7 +15,7 @@
 let businesses   = JSON.parse(localStorage.getItem('acc_businesses') || '[{"id":"default","name":"기본 사업체"}]');
 let currentBizId = localStorage.getItem('acc_current_biz') || 'default';
 
-function saveBusinesses() { localStorage.setItem('acc_businesses', JSON.stringify(businesses)); }
+function saveBusinesses() { localStorage.setItem('acc_businesses', JSON.stringify(businesses)); cloudQueue('acc_businesses'); }
 function saveCurrentBiz() { localStorage.setItem('acc_current_biz', currentBizId); }
 function bizKey(key)      { return key + '__' + currentBizId; }
 
@@ -24,7 +24,7 @@ const DB = {
   load(key, fallback = '[]') {
     try { return JSON.parse(localStorage.getItem(bizKey(key)) || fallback); } catch { return JSON.parse(fallback); }
   },
-  save(key, data) { localStorage.setItem(bizKey(key), JSON.stringify(data)); }
+  save(key, data) { localStorage.setItem(bizKey(key), JSON.stringify(data)); cloudQueue(bizKey(key)); }
 };
 
 // 거래처·품목은 사업체 공통 (prefix 없음), 나머지는 사업체별
@@ -32,8 +32,368 @@ const DBshared = {
   load(key, fallback = '[]') {
     try { return JSON.parse(localStorage.getItem(key) || fallback); } catch { return JSON.parse(fallback); }
   },
-  save(key, data) { localStorage.setItem(key, JSON.stringify(data)); }
+  save(key, data) { localStorage.setItem(key, JSON.stringify(data)); cloudQueue(key); }
 };
+
+// ── 클라우드 동기화 (Supabase) — 모든 기기가 같은 서버 데이터를 읽고 쓴다 ──────
+// 저장은 레코드(거래 1건) 단위로 서버에 반영되고, 다른 기기의 변경은 실시간/주기 확인으로 받아온다.
+// localStorage는 화면용 캐시일 뿐이며 로그인 상태에서는 서버가 항상 기준이다.
+const SB_URL = 'https://lgbhyqneidldvoxwvbdh.supabase.co';
+const SB_KEY = 'sb_publishable_FNEzw7Th_V9F6fWBF1C0zQ_Tvt9JRW9';
+const CLOUD_LOCAL_ONLY = new Set(['acc_current_biz', 'acc_sheets_url', 'acc_sheets_key', 'acc_last_backup_at', 'acc_last_backup_ok', 'acc_saved_at']);
+const CLOUD_RECORD_COLLECTIONS = ['acc_transactions', 'acc_vendors', 'acc_items', 'acc_quotes', 'acc_recurring', 'acc_expense_candidates', 'acc_deposits'];
+const CLOUD_DEVICE_ID = (() => { let d = localStorage.getItem('ledger_device_id'); if (!d) { d = 'd' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); localStorage.setItem('ledger_device_id', d); } return d; })();
+
+let sb = null, cloudUser = null, cloudReady = false, cloudBusy = false, cloudErr = '';
+let _cloudShadow = {}, _cloudDirty = new Set(), _cloudFlushTimer = null, _cloudPullTimer = null, _cloudPollTimer = null, _cloudRenderPending = false, _cloudChannel = null, _cloudLastSeen = '';
+
+function cloudKeyInfo(fullKey) {
+  const m = fullKey.match(/^(.*?)(?:__(.+))?$/);
+  const base = m[1], biz = m[2] || '';
+  if (CLOUD_RECORD_COLLECTIONS.includes(base)) return { kind: 'records', collection: base, biz };
+  return { kind: 'kv', key: fullKey };
+}
+function cloudFullKey(collection, biz) { return biz ? collection + '__' + biz : collection; }
+function cloudSyncableKeys() {
+  const out = [];
+  for (let i = 0; i < localStorage.length; i++) { const k = localStorage.key(i); if (k.startsWith('acc_') && !CLOUD_LOCAL_ONLY.has(k)) out.push(k); }
+  return out;
+}
+function cloudParse(str) { try { return JSON.parse(str); } catch { return str; } }
+function cloudSaveDirtyList() { try { localStorage.setItem('ledger_cloud_dirty', JSON.stringify([..._cloudDirty])); } catch {} }
+
+// DB.save/DBshared.save에서 호출 — 바뀐 키를 모아 잠시 후 서버로 보낸다
+function cloudQueue(fullKey) {
+  if (!cloudUser || CLOUD_LOCAL_ONLY.has(fullKey) || !fullKey.startsWith('acc_')) return;
+  _cloudDirty.add(fullKey);
+  cloudSaveDirtyList();
+  clearTimeout(_cloudFlushTimer);
+  _cloudFlushTimer = setTimeout(cloudFlush, 700);
+}
+function cloudMarkAllDirty() {
+  if (!cloudUser) return;
+  try { localStorage.setItem('ledger_cloud_dirty', JSON.stringify(['*'])); } catch {}
+}
+
+async function cloudFlush() {
+  if (!cloudUser || !cloudReady || cloudBusy || !_cloudDirty.size) return;
+  cloudBusy = true;
+  const keys = [..._cloudDirty];
+  try {
+    for (const k of keys) { await cloudPushKey(k); _cloudDirty.delete(k); }
+    cloudSaveDirtyList();
+    cloudErr = '';
+    localStorage.setItem('ledger_cloud_last', new Date().toISOString());
+  } catch (e) {
+    cloudErr = e.message || String(e);
+    setTimeout(cloudFlush, 8000);
+  } finally {
+    cloudBusy = false;
+    renderCloudStatus();
+    if (_cloudDirty.size && !cloudErr) { clearTimeout(_cloudFlushTimer); _cloudFlushTimer = setTimeout(cloudFlush, 300); }
+  }
+}
+
+async function cloudPushKey(fullKey, opts = {}) {
+  const info = cloudKeyInfo(fullKey);
+  const raw = localStorage.getItem(fullKey);
+  if (info.kind === 'kv') {
+    const { error } = await sb.from('kv').upsert({ user_id: cloudUser.id, key: fullKey, value: raw == null ? null : cloudParse(raw), device_id: CLOUD_DEVICE_ID }, { onConflict: 'user_id,key' });
+    if (error) throw new Error('kv ' + fullKey + ': ' + error.message);
+    _cloudShadow[fullKey] = raw;
+    return;
+  }
+  let arr = cloudParse(raw || '[]');
+  if (!Array.isArray(arr)) arr = [];
+  let changedLocal = false;
+  arr.forEach(r => { if (r && typeof r === 'object' && !r.id) { r.id = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 8); changedLocal = true; } });
+  if (changedLocal) localStorage.setItem(fullKey, JSON.stringify(arr));
+  const prev = _cloudShadow[fullKey] instanceof Map ? _cloudShadow[fullKey] : new Map();
+  const next = new Map();
+  const ups = [];
+  arr.forEach((r, i) => {
+    if (!r || typeof r !== 'object') return;
+    const j = JSON.stringify(r);
+    next.set(String(r.id), j);
+    if (opts.full || prev.get(String(r.id)) !== j) ups.push({ user_id: cloudUser.id, collection: info.collection, biz_id: info.biz, id: String(r.id), data: r, seq: i, deleted: false, device_id: CLOUD_DEVICE_ID });
+  });
+  let gone = [...prev.keys()].filter(id => !next.has(id));
+  if (opts.reconcileIds) gone = gone.concat(opts.reconcileIds.filter(id => !next.has(id) && !gone.includes(id)));
+  for (let i = 0; i < ups.length; i += 200) {
+    const { error } = await sb.from('records').upsert(ups.slice(i, i + 200), { onConflict: 'user_id,collection,biz_id,id' });
+    if (error) throw new Error(info.collection + ': ' + error.message);
+  }
+  for (let i = 0; i < gone.length; i += 200) {
+    const { error } = await sb.from('records').update({ deleted: true, device_id: CLOUD_DEVICE_ID }).eq('user_id', cloudUser.id).eq('collection', info.collection).eq('biz_id', info.biz).in('id', gone.slice(i, i + 200));
+    if (error) throw new Error(info.collection + ' 삭제: ' + error.message);
+  }
+  _cloudShadow[fullKey] = next;
+}
+
+// 서버의 전체 데이터를 받아 이 기기 캐시를 교체
+async function cloudPull(opts = {}) {
+  if (!cloudUser) return false;
+  const [recs, kvs] = await Promise.all([
+    sb.from('records').select('collection,biz_id,id,data,seq,updated_at').eq('user_id', cloudUser.id).eq('deleted', false).order('seq').limit(20000),
+    sb.from('kv').select('key,value,updated_at').eq('user_id', cloudUser.id)
+  ]);
+  if (recs.error) throw new Error(recs.error.message);
+  if (kvs.error) throw new Error(kvs.error.message);
+  const byKey = {};
+  recs.data.forEach(r => { const k = cloudFullKey(r.collection, r.biz_id); (byKey[k] = byKey[k] || []).push(r); });
+  const serverKeys = new Set([...Object.keys(byKey), ...kvs.data.map(k => k.key)]);
+  const serverEmpty = !recs.data.length && !kvs.data.length;
+  if (opts.probe) return { serverEmpty, records: recs.data.length, kv: kvs.data.length };
+
+  if (!opts.keepLocal) {
+    const cur = _collectAccStorage();
+    try { localStorage.setItem('ledger_prev_local', JSON.stringify({ at: new Date().toISOString(), storage: cur })); } catch {}
+    Object.keys(cur).forEach(k => { if (!CLOUD_LOCAL_ONLY.has(k) && !serverKeys.has(k)) localStorage.removeItem(k); });
+  }
+  const shadow = {};
+  Object.entries(byKey).forEach(([k, rows]) => {
+    rows.sort((a, b) => (a.seq - b.seq) || a.updated_at.localeCompare(b.updated_at));
+    const arr = rows.map(r => r.data);
+    localStorage.setItem(k, JSON.stringify(arr));
+    shadow[k] = new Map(arr.map(r => [String(r.id), JSON.stringify(r)]));
+  });
+  kvs.data.forEach(r => { const v = (r.value != null && typeof r.value === 'object') ? JSON.stringify(r.value) : (r.value == null ? '' : String(r.value)); localStorage.setItem(r.key, v); shadow[r.key] = v; });
+  _cloudShadow = shadow;
+  let seen = '';
+  recs.data.concat(kvs.data).forEach(r => { if (r.updated_at > seen) seen = r.updated_at; });
+  _cloudLastSeen = seen;
+  localStorage.setItem('ledger_cloud_last', new Date().toISOString());
+  if (!businesses.length || !businesses.find(b => b.id === currentBizId)) { currentBizId = 'default'; saveCurrentBiz(); }
+  reloadGlobalsFromLocal();
+  if (document.getElementById('modal-overlay').classList.contains('hidden')) { renderSidebarBiz(); render(currentPage); }
+  else _cloudRenderPending = true;
+  return { serverEmpty };
+}
+
+function reloadGlobalsFromLocal() {
+  businesses   = JSON.parse(localStorage.getItem('acc_businesses') || '[{"id":"default","name":"기본 사업체"}]');
+  if (!businesses.find(b => b.id === currentBizId)) { currentBizId = businesses[0] ? businesses[0].id : 'default'; saveCurrentBiz(); }
+  vendors      = DBshared.load('acc_vendors');
+  items        = DBshared.load('acc_items');
+  transactions = DB.load('acc_transactions');
+  companyInfo  = DB.load('acc_company', '{}');
+  quotes       = DB.load('acc_quotes');
+  _candidatesCache = null; _depositsCache = null; docStates = {};
+}
+
+// 이 기기의 모든 데이터를 서버에 올림 (첫 로그인 이전 / 복원 후 전체 반영)
+async function cloudPushAll(reconcile) {
+  const keys = cloudSyncableKeys();
+  let ids = {};
+  if (reconcile) {
+    const { data, error } = await sb.from('records').select('collection,biz_id,id').eq('user_id', cloudUser.id).eq('deleted', false).limit(20000);
+    if (error) throw new Error(error.message);
+    data.forEach(r => { const k = cloudFullKey(r.collection, r.biz_id); (ids[k] = ids[k] || []).push(r.id); });
+  }
+  for (const k of keys) await cloudPushKey(k, { full: true, reconcileIds: ids[k] || [] });
+  if (reconcile) {
+    for (const k of Object.keys(ids)) if (!keys.includes(k)) {
+      const info = cloudKeyInfo(k);
+      await sb.from('records').update({ deleted: true, device_id: CLOUD_DEVICE_ID }).eq('user_id', cloudUser.id).eq('collection', info.collection).eq('biz_id', info.biz);
+    }
+  }
+  _cloudDirty.clear(); cloudSaveDirtyList();
+  localStorage.setItem('ledger_cloud_last', new Date().toISOString());
+}
+
+async function cloudDeleteBiz(bizId) {
+  if (!cloudUser) return;
+  try {
+    await sb.from('records').update({ deleted: true, device_id: CLOUD_DEVICE_ID }).eq('user_id', cloudUser.id).eq('biz_id', bizId);
+    const { data } = await sb.from('kv').select('key').eq('user_id', cloudUser.id).like('key', '%\\_\\_' + bizId);
+    if (data && data.length) await sb.from('kv').delete().eq('user_id', cloudUser.id).in('key', data.map(r => r.key));
+  } catch (e) { cloudErr = e.message; renderCloudStatus(); }
+}
+
+function cloudSchedulePull(delay = 1200) { clearTimeout(_cloudPullTimer); _cloudPullTimer = setTimeout(() => cloudPull().catch(e => { cloudErr = e.message; renderCloudStatus(); }), delay); }
+
+async function cloudCheckRemote() {
+  if (!cloudUser || !cloudReady || document.visibilityState === 'hidden') return;
+  try {
+    const [a, b] = await Promise.all([
+      sb.from('records').select('updated_at').eq('user_id', cloudUser.id).order('updated_at', { ascending: false }).limit(1),
+      sb.from('kv').select('updated_at').eq('user_id', cloudUser.id).order('updated_at', { ascending: false }).limit(1)
+    ]);
+    const latest = [(a.data && a.data[0] && a.data[0].updated_at) || '', (b.data && b.data[0] && b.data[0].updated_at) || ''].sort().pop();
+    if (latest && latest > _cloudLastSeen && !_cloudDirty.size && !cloudBusy) cloudSchedulePull(0);
+  } catch {}
+}
+
+function cloudSubscribe() {
+  if (_cloudChannel || !sb || !cloudUser) return;
+  try {
+    _cloudChannel = sb.channel('ledger-' + cloudUser.id)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'records', filter: 'user_id=eq.' + cloudUser.id }, p => { if (!p.new || p.new.device_id !== CLOUD_DEVICE_ID) cloudSchedulePull(); })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'kv',      filter: 'user_id=eq.' + cloudUser.id }, p => { if (!p.new || p.new.device_id !== CLOUD_DEVICE_ID) cloudSchedulePull(); })
+      .subscribe();
+  } catch {}
+  clearInterval(_cloudPollTimer);
+  _cloudPollTimer = setInterval(cloudCheckRemote, 45000);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') cloudCheckRemote();
+    else if (_cloudDirty.size) { clearTimeout(_cloudFlushTimer); cloudFlush(); }
+  });
+}
+
+async function cloudInit() {
+  if (!window.supabase || !SB_URL) return false;
+  sb = window.supabase.createClient(SB_URL, SB_KEY, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: true } });
+  sb.auth.onAuthStateChange(async (event) => {
+    if (event === 'PASSWORD_RECOVERY') {
+      const pw = prompt('새 비밀번호를 입력하세요 (6자 이상)');
+      if (pw && pw.length >= 6) { const { error } = await sb.auth.updateUser({ password: pw }); alert(error ? '변경 실패: ' + error.message : '비밀번호가 변경됐습니다.'); }
+    }
+  });
+  const { data } = await sb.auth.getSession();
+  cloudUser = data && data.session ? data.session.user : null;
+  renderCloudStatus();
+  return !!cloudUser;
+}
+
+// 로그인 직후/시작 시: 미전송분 먼저 올리고 서버 데이터로 맞춘다
+async function cloudStart() {
+  if (!cloudUser) return;
+  cloudBusy = true; renderCloudStatus();
+  try {
+    const dirty = cloudParse(localStorage.getItem('ledger_cloud_dirty') || '[]');
+    const probe = await cloudPull({ probe: true });
+    const localHas = cloudSyncableKeys().some(k => { const v = localStorage.getItem(k); return v && v !== '[]' && v !== '{}'; });
+    if (probe.serverEmpty && localHas) {
+      const sm = summarizeStorage(_collectAccStorage());
+      if (!confirm(`서버가 비어 있어 이 기기의 데이터를 서버의 최초 데이터로 올립니다.\n\n이 기기: 거래 ${sm.tx}건 · 최근 거래일 ${sm.last || '-'}\n\n⚠ 가장 최신 데이터가 있는 기기에서 먼저 로그인해야 합니다. 이 기기가 맞으면 확인을 누르세요.`)) {
+        await sb.auth.signOut(); cloudUser = null; cloudBusy = false; renderCloudStatus();
+        alert('로그아웃했습니다. 최신 데이터가 있는 기기에서 먼저 로그인한 뒤, 이 기기에서 다시 로그인하세요.');
+        return;
+      }
+      cloudBusy = false;
+      await cloudPushAll(false);
+      cloudBusy = true;
+      showSheetsBackupStatus('☁ 이 기기의 데이터를 서버에 올렸습니다', 'success');
+    } else if (Array.isArray(dirty) && dirty.includes('*')) {
+      cloudBusy = false; await cloudPushAll(true); cloudBusy = true;
+    } else if (Array.isArray(dirty) && dirty.length) {
+      cloudBusy = false;
+      for (const k of dirty) { try { await cloudPushKey(k, { full: true }); } catch (e) { cloudErr = e.message; } }
+      _cloudDirty.clear(); cloudSaveDirtyList();
+      cloudBusy = true;
+    }
+    cloudBusy = false;
+    const hadLocal = localHas && !probe.serverEmpty;
+    await cloudPull();
+    if (hadLocal) showSheetsBackupStatus('☁ 서버 데이터로 맞췄습니다 (이 기기의 이전 상태는 보관됨)', 'success');
+    cloudReady = true;
+    cloudErr = '';
+    cloudSubscribe();
+    if (_cloudDirty.size) cloudFlush();
+  } catch (e) {
+    cloudErr = e.message || String(e);
+  } finally {
+    cloudBusy = false;
+    renderCloudStatus();
+  }
+}
+
+function renderCloudStatus() {
+  const el = document.getElementById('cloud-status');
+  if (!el) return;
+  if (!sb) { el.innerHTML = '<span style="color:#94a3b8">☁ 서버 연결 모듈 로딩 실패 — 새로고침</span>'; return; }
+  if (!cloudUser) {
+    el.innerHTML = `<div style="color:#fbbf24;margin-bottom:6px">⚠ 로그인하면 폰·PC가 같은 데이터를 봅니다</div><button class="btn btn-primary btn-sm" style="width:100%" onclick="openCloudLogin()">🔐 로그인 / 가입</button>`;
+    return;
+  }
+  const last = localStorage.getItem('ledger_cloud_last');
+  const d = last ? new Date(last) : null;
+  const hm = d ? pad2(d.getHours()) + ':' + pad2(d.getMinutes()) : '-';
+  const state = cloudErr
+    ? `<span style="color:#f87171;font-weight:600;cursor:pointer" onclick="cloudRetry()" title="${docEsc(cloudErr)}">⚠ 동기화 오류 — 클릭해서 재시도<br><span style="font-weight:400;color:#fca5a5">${docEsc(cloudErr.slice(0, 48))}</span></span>`
+    : cloudBusy || _cloudDirty.size ? '<span style="color:#fbbf24">● 서버와 동기화 중…</span>'
+    : `<span style="color:#4ade80">● 서버 동기화 켜짐 · ${hm}</span>`;
+  el.innerHTML = `${state}<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;color:#94a3b8"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px" title="${docEsc(cloudUser.email || '')}">${docEsc(cloudUser.email || '')}</span><button class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:10px;color:#94a3b8" onclick="openCloudAccount()">계정</button></div>`;
+}
+
+function cloudRetry() { cloudErr = ''; renderCloudStatus(); if (!cloudReady) cloudStart(); else cloudFlush(); }
+
+function openCloudLogin() {
+  openModal('🔐 로그인', `
+    <p style="font-size:12.5px;color:var(--gray-500);line-height:1.7;margin-bottom:12px">로그인하면 모든 기기에서 <b>같은 서버 데이터</b>를 보고, 저장은 거래 한 건 단위로 즉시 서버에 반영됩니다. 처음이면 이메일·비밀번호를 정하고 <b>가입</b>을 누르세요.</p>
+    <div class="form-group"><label>이메일</label><input id="cl-email" class="form-control" type="email" autocomplete="username" value="${docEsc(localStorage.getItem('ledger_last_email') || '')}"></div>
+    <div class="form-group"><label>비밀번호 (6자 이상)</label><input id="cl-pw" class="form-control" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')cloudLogin()"></div>
+    <div id="cl-msg" style="font-size:12px;min-height:18px;margin:4px 0 10px"></div>
+    <div class="modal-footer">
+      <button class="btn btn-ghost btn-sm" onclick="cloudResetPw()" style="margin-right:auto">비밀번호 찾기</button>
+      <button class="btn btn-ghost" onclick="cloudSignup()">가입</button>
+      <button class="btn btn-primary" onclick="cloudLogin()">로그인</button>
+    </div>`);
+  setTimeout(() => document.getElementById(localStorage.getItem('ledger_last_email') ? 'cl-pw' : 'cl-email')?.focus(), 50);
+}
+function _clMsg(t, bad) { const m = document.getElementById('cl-msg'); if (m) { m.textContent = t; m.style.color = bad ? 'var(--danger)' : 'var(--success)'; } }
+function _clCreds() { return { email: (document.getElementById('cl-email')?.value || '').trim(), password: document.getElementById('cl-pw')?.value || '' }; }
+
+async function cloudLogin() {
+  const c = _clCreds();
+  if (!c.email || !c.password) { _clMsg('이메일과 비밀번호를 입력하세요.', true); return; }
+  _clMsg('로그인 중…');
+  const { data, error } = await sb.auth.signInWithPassword(c);
+  if (error) { _clMsg(/invalid/i.test(error.message) ? '이메일 또는 비밀번호가 틀립니다.' : /confirm/i.test(error.message) ? '이메일 인증이 필요합니다. 받은 메일의 링크를 눌러주세요.' : error.message, true); return; }
+  localStorage.setItem('ledger_last_email', c.email);
+  cloudUser = data.user;
+  closeModal();
+  renderCloudStatus();
+  await cloudStart();
+}
+async function cloudSignup() {
+  const c = _clCreds();
+  if (!c.email || c.password.length < 6) { _clMsg('이메일과 6자 이상 비밀번호를 입력하세요.', true); return; }
+  _clMsg('가입 중…');
+  const { data, error } = await sb.auth.signUp({ ...c, options: { emailRedirectTo: location.origin + location.pathname } });
+  if (error) { _clMsg(error.message, true); return; }
+  localStorage.setItem('ledger_last_email', c.email);
+  if (data.session) { cloudUser = data.user; closeModal(); renderCloudStatus(); await cloudStart(); return; }
+  _clMsg('가입 메일을 보냈습니다. 메일의 링크를 누른 뒤 여기서 로그인하세요.');
+}
+async function cloudResetPw() {
+  const c = _clCreds();
+  if (!c.email) { _clMsg('이메일을 먼저 입력하세요.', true); return; }
+  const { error } = await sb.auth.resetPasswordForEmail(c.email, { redirectTo: location.origin + location.pathname });
+  _clMsg(error ? error.message : '재설정 메일을 보냈습니다. 메일의 링크를 누르면 새 비밀번호를 정할 수 있습니다.', !!error);
+}
+
+function openCloudAccount() {
+  const dirty = _cloudDirty.size;
+  openModal('☁ 서버 동기화', `
+    <div style="font-size:13px;line-height:1.9">
+      <div>계정: <b>${docEsc(cloudUser.email || '')}</b></div>
+      <div>상태: ${cloudErr ? '<span style="color:var(--danger)">오류 — ' + docEsc(cloudErr) + '</span>' : dirty ? '전송 대기 ' + dirty + '건' : '<span style="color:var(--success)">정상</span>'}</div>
+      <div>마지막 동기화: ${fmtSyncAt(localStorage.getItem('ledger_cloud_last'))}</div>
+      <div style="color:var(--gray-500);font-size:12px">기기 ID ${CLOUD_DEVICE_ID}</div>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0">
+      <button class="btn btn-ghost btn-sm" onclick="cloudForcePull()">⬇ 서버 데이터 다시 받기</button>
+      <button class="btn btn-ghost btn-sm" onclick="cloudForcePush()">⬆ 이 기기 데이터로 서버 맞추기</button>
+      <button class="btn btn-ghost btn-sm" onclick="cloudChangePw()">🔑 비밀번호 변경</button>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-danger btn-sm" onclick="cloudLogout()" style="margin-right:auto">로그아웃</button>
+      <button class="btn btn-ghost" onclick="closeModal()">닫기</button>
+    </div>`);
+}
+async function cloudForcePull() { if (!confirm('서버 데이터로 이 기기를 다시 맞춥니다. (현재 상태는 "복원 직전 상태"로 보관)')) return; closeModal(); try { await cloudPull(); showSheetsBackupStatus('⬇ 서버 데이터로 맞췄습니다', 'success'); } catch (e) { alert('실패: ' + e.message); } }
+async function cloudForcePush() { if (!confirm('이 기기의 데이터로 서버를 덮어씁니다. 다른 기기는 다음에 열 때 이 데이터를 받습니다. 계속할까요?')) return; closeModal(); cloudBusy = true; renderCloudStatus(); try { await cloudPushAll(true); await cloudPull(); showSheetsBackupStatus('⬆ 서버를 이 기기 데이터로 맞췄습니다', 'success'); } catch (e) { alert('실패: ' + e.message); } finally { cloudBusy = false; renderCloudStatus(); } }
+async function cloudChangePw() { const pw = prompt('새 비밀번호 (6자 이상)'); if (!pw) return; if (pw.length < 6) { alert('6자 이상이어야 합니다.'); return; } const { error } = await sb.auth.updateUser({ password: pw }); alert(error ? '변경 실패: ' + error.message : '비밀번호가 변경됐습니다.'); }
+async function cloudLogout() {
+  if (_cloudDirty.size && !confirm('아직 서버에 안 올라간 변경이 있습니다. 그래도 로그아웃할까요?')) return;
+  if (!confirm('로그아웃하면 이 기기는 서버와 동기화되지 않습니다. 데이터는 이 기기에 남습니다.')) return;
+  await sb.auth.signOut();
+  cloudUser = null; cloudReady = false; _cloudDirty.clear(); cloudSaveDirtyList();
+  if (_cloudChannel) { try { sb.removeChannel(_cloudChannel); } catch {} _cloudChannel = null; }
+  clearInterval(_cloudPollTimer);
+  closeModal(); renderCloudStatus();
+}
 
 let vendors      = DBshared.load('acc_vendors');
 let items        = DBshared.load('acc_items');
@@ -132,11 +492,13 @@ function applyRemoteData(data, mode) {
   setSyncBase(data.acc_saved_at || '');
   localStorage.removeItem('ledger_backup_pending');
   sessionStorage.setItem('acc_auto_synced', mode || 'auto');
+  cloudMarkAllDirty();
   location.reload();
 }
 
 // 시작 시 동기화 — 기준점과 비교해 안전한 방향으로만 자동 처리
 async function autoSyncFromSheets() {
+  if (cloudUser) { ensureDefaultStamp(); return; }
   if (!APPS_SCRIPT_URL || !SHEETS_SECRET) { ensureDefaultStamp(); return; }
   try {
     const info = await gasPost({ action: 'getSavedAt' });
@@ -182,7 +544,7 @@ async function runAutoSheetsBackup(opts = {}) {
   const sentAt  = storage.acc_saved_at || '';
   let ok = false;
   try {
-    const json = await gasPost({ action: 'backupStorage', data: storage, expectSavedAt: syncBase(), force: !!opts.force, snapshot: opts.snapshot || 'auto' });
+    const json = await gasPost({ action: 'backupStorage', data: storage, expectSavedAt: syncBase(), force: !!opts.force || !!cloudUser, snapshot: opts.snapshot || 'auto' });
     if (json.success) {
       setSyncBase(sentAt);
       localStorage.removeItem('ledger_backup_pending');
@@ -261,6 +623,7 @@ function undoLastPull() {
   localStorage.setItem('acc_saved_at', new Date().toISOString());
   localStorage.setItem('ledger_backup_pending', '1');
   sessionStorage.setItem('acc_auto_synced', 'undo');
+  cloudMarkAllDirty();
   location.reload();
 }
 
@@ -390,6 +753,7 @@ async function restoreCandidate(i) {
   const ok = await runAutoSheetsBackup({ force: true, snapshot: 'before', silent: true });
   if (!ok) localStorage.setItem('ledger_backup_pending', '1');
   sessionStorage.setItem('acc_auto_synced', 'latest');
+  cloudMarkAllDirty();
   location.reload();
 }
 
@@ -567,6 +931,7 @@ async function restoreSnapshotById(id) {
     const ok = await runAutoSheetsBackup({ force: true, snapshot: 'before', silent: true });
     if (!ok) localStorage.setItem('ledger_backup_pending', '1');
     sessionStorage.setItem('acc_auto_synced', 'snapshot');
+    cloudMarkAllDirty();
     location.reload();
   } catch (err) {
     alert('연결 오류: ' + err.message);
@@ -775,9 +1140,10 @@ function deleteBiz(id) {
   const b = businesses.find(b => b.id === id);
   if (!b || id === 'default') return;
   if (!confirm(`"${b.name}" 사업체를 삭제하시겠습니까?\n※ 해당 사업체의 모든 데이터도 함께 삭제됩니다.`)) return;
-  ['acc_transactions','acc_company','acc_quotes'].forEach(k =>
+  ['acc_transactions','acc_company','acc_quotes','acc_recurring'].forEach(k =>
     localStorage.removeItem(k + '__' + id)
   );
+  cloudDeleteBiz(id);
   businesses = businesses.filter(b => b.id !== id);
   saveBusinesses();
   if (currentBizId === id) switchBusiness('default');
@@ -1852,6 +2218,7 @@ function openModal(title, bodyHtml, large = false) {
 function closeModal() {
   document.getElementById('modal-overlay').classList.add('hidden');
   document.getElementById('modal-body').innerHTML = '';
+  if (_cloudRenderPending) { _cloudRenderPending = false; renderSidebarBiz(); render(currentPage); }
 }
 
 // ── HOME PAGE ─────────────────────────────────────────────
@@ -7343,9 +7710,11 @@ document.addEventListener('DOMContentLoaded', () => {
     sessionStorage.removeItem('acc_auto_synced');
     const msg = { undo: '↩ 복원 직전 상태로 되돌렸습니다', pull: '☁ 구글시트 데이터로 맞췄습니다', snapshot: '↩ 스냅샷 시점으로 되돌렸습니다', latest: '🔎 가장 최근 데이터로 복원했습니다' }[synced] || '☁ 다른 기기의 변경사항을 불러왔습니다';
     showSheetsBackupStatus(msg, 'success');
-    ensureDefaultStamp();
-    if (localStorage.getItem('ledger_backup_pending')) runAutoSheetsBackup({ silent: true });
-  } else {
-    autoSyncFromSheets();
   }
+  (async () => {
+    const logged = await cloudInit();
+    if (logged) { await cloudStart(); ensureDefaultStamp(); if (localStorage.getItem('ledger_backup_pending')) runAutoSheetsBackup({ silent: true }); return; }
+    if (synced) { ensureDefaultStamp(); if (localStorage.getItem('ledger_backup_pending')) runAutoSheetsBackup({ silent: true }); }
+    else autoSyncFromSheets();
+  })();
 });

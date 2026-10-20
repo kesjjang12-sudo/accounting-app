@@ -5,7 +5,8 @@
 - `index.html` — 레이아웃 + 페이지 div
 - `app.js` — 전체 로직 (~3700줄)
 - `styles.css` — 스타일
-- `Code.gs` — Google Apps Script (구글 시트 백업/SMS 수신)
+- `Code.gs` — Google Apps Script (구글 시트 백업 사본/SMS 수신/AI 중계)
+- 데이터 기준: Supabase(`ledger` 프로젝트) — 아래 '서버 동기화' 참고
 
 ## 스토리지 구조
 ```
@@ -29,7 +30,15 @@ localStorage
 ```
 ※ `acc_` 접두사 키만 시트에 백업된다. 기기 고유 상태는 `ledger_`/`ht_` 접두사를 쓴다.
 
-### 기기 간 동기화 규칙 (autoSyncFromSheets)
+### 서버 동기화 (Supabase — 로그인 시 데이터의 단일 기준)
+- 프로젝트 `ledger` (ap-northeast-2, id lgbhyqneidldvoxwvbdh). 테이블 `records`(컬렉션·사업체·id 단위 레코드, 소프트삭제 `deleted`)와 `kv`(단일 값 키). RLS: 본인 행만.
+- 앱: `SB_URL`/`SB_KEY`(공개 publishable 키)로 supabase-js(CDN) 사용. `DB.save`/`DBshared.save` → `cloudQueue(key)` → 700ms 후 `cloudFlush` → 레코드 단위 diff upsert(메모리 shadow 비교), 사라진 id는 `deleted=true`.
+- 레코드 컬렉션: `CLOUD_RECORD_COLLECTIONS` (transactions/vendors/items/quotes/recurring/expense_candidates/deposits). 나머지 `acc_*`는 kv. `CLOUD_LOCAL_ONLY` 키는 기기 전용.
+- 시작: `cloudInit` → 세션 있으면 `cloudStart`(미전송분 push → `cloudPull`로 캐시 교체 → `reloadGlobalsFromLocal` → Realtime 구독 + 45초 주기 확인). 서버가 비어 있으면 확인 후 로컬 전체 업로드.
+- 로그인 상태에서는 시트 autoSync(pull/충돌 모달) 비활성, 시트 백업은 force push 사본만. 복원류(스냅샷/최신찾기/되돌리기)는 reload 전 `cloudMarkAllDirty()` → 다음 시작 때 `cloudPushAll(true)`로 서버 전체 반영.
+- 모달 열린 중 수신 시 데이터만 갱신하고 화면은 `closeModal`에서 반영(`_cloudRenderPending`).
+
+### 기기 간 동기화 규칙 — 시트 방식 (로그인 안 했을 때만, autoSyncFromSheets)
 - 시트 savedAt == 기준점 → 로컬 변경만 있으면 push
 - 시트 savedAt != 기준점 이고 로컬 변경 없음 → 시트 데이터 pull (직전 상태는 ledger_prev_local 보관)
 - 양쪽 다 변경 → 자동 처리 금지, openSyncConflictModal로 거래 건수·최근 거래일을 보여주고 사용자가 선택
