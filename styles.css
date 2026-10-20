@@ -460,3 +460,17 @@ label { font-size: 12.5px; font-weight: 600; color: var(--gray-700); }
     max-height: calc(100vh - 16px);
   }
 }
+
+/* ── 앱 잠금 화면 ── */
+body.locked .sidebar, body.locked .main-content, body.locked #modal-overlay { visibility: hidden; }
+.lock-screen { position: fixed; inset: 0; z-index: 100000; background: #0f172a; display: flex; align-items: center; justify-content: center; color: #e2e8f0; padding: 16px; }
+.lock-card { width: min(320px, 92vw); text-align: center; }
+.lock-dots { display: flex; gap: 14px; justify-content: center; margin: 6px 0 10px; }
+.lock-dot { width: 14px; height: 14px; border-radius: 50%; border: 2px solid #64748b; }
+.lock-dot.on { background: #60a5fa; border-color: #60a5fa; }
+.lock-msg { min-height: 20px; font-size: 12.5px; color: #94a3b8; margin-bottom: 14px; }
+.lock-msg.bad { color: #f87171; }
+.lock-pad { display: grid; grid-template-columns: repeat(3, 72px); gap: 12px; justify-content: center; }
+.lock-key { height: 60px; border-radius: 14px; border: 1px solid #334155; background: #1e293b; color: #f1f5f9; font-size: 22px; cursor: pointer; font-family: inherit; }
+.lock-key:active { background: #334155; }
+.lock-key:disabled { opacity: .35; cursor: default; }

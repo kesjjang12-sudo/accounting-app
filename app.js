@@ -142,7 +142,7 @@ async function cloudPull(opts = {}) {
   const byKey = {};
   recs.data.forEach(r => { const k = cloudFullKey(r.collection, r.biz_id); (byKey[k] = byKey[k] || []).push(r); });
   const serverKeys = new Set([...Object.keys(byKey), ...kvs.data.map(k => k.key)]);
-  const serverEmpty = !recs.data.length && !kvs.data.length;
+  const serverEmpty = !recs.data.length;
   if (opts.probe) return { serverEmpty, records: recs.data.length, kv: kvs.data.length };
 
   if (!opts.keepLocal) {
@@ -303,7 +303,7 @@ function renderCloudStatus() {
   if (!el) return;
   if (!sb) { el.innerHTML = '<span style="color:#94a3b8">☁ 서버 연결 모듈 로딩 실패 — 새로고침</span>'; return; }
   if (!cloudUser) {
-    el.innerHTML = `<div style="color:#fbbf24;margin-bottom:6px">⚠ 로그인하면 폰·PC가 같은 데이터를 봅니다</div><button class="btn btn-primary btn-sm" style="width:100%" onclick="openCloudLogin()">🔐 로그인 / 가입</button>`;
+    el.innerHTML = `<span style="color:#f87171;font-weight:600;cursor:pointer" onclick="cloudRetry()">⚠ 서버 미연결 — 클릭해서 재시도</span>`;
     return;
   }
   const last = localStorage.getItem('ledger_cloud_last');
@@ -313,86 +313,200 @@ function renderCloudStatus() {
     ? `<span style="color:#f87171;font-weight:600;cursor:pointer" onclick="cloudRetry()" title="${docEsc(cloudErr)}">⚠ 동기화 오류 — 클릭해서 재시도<br><span style="font-weight:400;color:#fca5a5">${docEsc(cloudErr.slice(0, 48))}</span></span>`
     : cloudBusy || _cloudDirty.size ? '<span style="color:#fbbf24">● 서버와 동기화 중…</span>'
     : `<span style="color:#4ade80">● 서버 동기화 켜짐 · ${hm}</span>`;
-  el.innerHTML = `${state}<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;color:#94a3b8"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px" title="${docEsc(cloudUser.email || '')}">${docEsc(cloudUser.email || '')}</span><button class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:10px;color:#94a3b8" onclick="openCloudAccount()">계정</button></div>`;
+  el.innerHTML = `${state}<div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;color:#94a3b8"><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:140px">공용 계정 · 모든 기기 공유</span><button class="btn btn-ghost btn-sm" style="padding:1px 6px;font-size:10px;color:#94a3b8" onclick="openCloudAccount()">설정</button></div>`;
 }
 
-function cloudRetry() { cloudErr = ''; renderCloudStatus(); if (!cloudReady) cloudStart(); else cloudFlush(); }
+async function cloudRetry() { cloudErr = ''; renderCloudStatus(); if (!cloudUser && !(await cloudReconnect())) { cloudErr = '서버에 연결할 수 없습니다'; renderCloudStatus(); return; } if (!cloudReady) await cloudStart(); else cloudFlush(); }
 
-function openCloudLogin() {
-  openModal('🔐 로그인', `
-    <p style="font-size:12.5px;color:var(--gray-500);line-height:1.7;margin-bottom:12px">로그인하면 모든 기기에서 <b>같은 서버 데이터</b>를 보고, 저장은 거래 한 건 단위로 즉시 서버에 반영됩니다. 처음이면 이메일·비밀번호를 정하고 <b>가입</b>을 누르세요.</p>
-    <div class="form-group"><label>이메일</label><input id="cl-email" class="form-control" type="email" autocomplete="username" value="${docEsc(localStorage.getItem('ledger_last_email') || '')}"></div>
-    <div class="form-group"><label>비밀번호 (6자 이상)</label><input id="cl-pw" class="form-control" type="password" autocomplete="current-password" onkeydown="if(event.key==='Enter')cloudLogin()"></div>
-    <div id="cl-msg" style="font-size:12px;min-height:18px;margin:4px 0 10px"></div>
-    <div class="modal-footer">
-      <button class="btn btn-ghost btn-sm" onclick="cloudResetPw()" style="margin-right:auto">비밀번호 찾기</button>
-      <button class="btn btn-ghost" onclick="cloudSignup()">가입</button>
-      <button class="btn btn-primary" onclick="cloudLogin()">로그인</button>
-    </div>`);
-  setTimeout(() => document.getElementById(localStorage.getItem('ledger_last_email') ? 'cl-pw' : 'cl-email')?.focus(), 50);
+// ── 앱 잠금 (공용 비밀번호 4자리) ─────────────────────────
+// 비밀번호에서 파생한 키로 공용 서버 계정에 로그인한다. 비밀번호 자체는 어디에도 저장하지 않는다.
+const LOCK_EMAIL = 'owner@jangbu.app';
+const LOCK_SALT  = 'jangbu-ledger-v1';
+const LOCK_WAITS = [1, 5, 15, 60];
+const LOCK_RELOCK_MS = 15 * 60 * 1000;
+let _lockPin = '', _lockDerived = '', _lockTimer = null, _lockBusy = false, _lockHiddenAt = 0;
+
+function _sha256Sync(str) {
+  const K = [0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  const b = new TextEncoder().encode(str);
+  const l = b.length, bitLen = l * 8, n = (((l + 9) + 63) >> 6) << 6;
+  const m = new Uint8Array(n); m.set(b); m[l] = 0x80;
+  const dv = new DataView(m.buffer); dv.setUint32(n - 4, bitLen >>> 0); dv.setUint32(n - 8, Math.floor(bitLen / 0x100000000));
+  let H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const w = new Uint32Array(64), rotr = (x, k) => (x >>> k) | (x << (32 - k));
+  for (let i = 0; i < n; i += 64) {
+    for (let t = 0; t < 16; t++) w[t] = dv.getUint32(i + t * 4);
+    for (let t = 16; t < 64; t++) { const s0 = rotr(w[t-15],7) ^ rotr(w[t-15],18) ^ (w[t-15] >>> 3), s1 = rotr(w[t-2],17) ^ rotr(w[t-2],19) ^ (w[t-2] >>> 10); w[t] = (w[t-16] + s0 + w[t-7] + s1) >>> 0; }
+    let [a,b2,c,d,e,f,g,h] = H;
+    for (let t = 0; t < 64; t++) {
+      const S1 = rotr(e,6) ^ rotr(e,11) ^ rotr(e,25), ch = (e & f) ^ (~e & g), t1 = (h + S1 + ch + K[t] + w[t]) >>> 0;
+      const S0 = rotr(a,2) ^ rotr(a,13) ^ rotr(a,22), mj = (a & b2) ^ (a & c) ^ (b2 & c), t2 = (S0 + mj) >>> 0;
+      h = g; g = f; f = e; e = (d + t1) >>> 0; d = c; c = b2; b2 = a; a = (t1 + t2) >>> 0;
+    }
+    H = H.map((v, i2) => (v + [a,b2,c,d,e,f,g,h][i2]) >>> 0);
+  }
+  return H.map(v => v.toString(16).padStart(8, '0')).join('');
 }
-function _clMsg(t, bad) { const m = document.getElementById('cl-msg'); if (m) { m.textContent = t; m.style.color = bad ? 'var(--danger)' : 'var(--success)'; } }
-function _clCreds() { return { email: (document.getElementById('cl-email')?.value || '').trim(), password: document.getElementById('cl-pw')?.value || '' }; }
+async function sha256Hex(str) {
+  try {
+    if (crypto && crypto.subtle) { const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(str)); return [...new Uint8Array(buf)].map(x => x.toString(16).padStart(2, '0')).join(''); }
+  } catch {}
+  return _sha256Sync(str);
+}
 
-async function cloudLogin() {
-  const c = _clCreds();
-  if (!c.email || !c.password) { _clMsg('이메일과 비밀번호를 입력하세요.', true); return; }
-  _clMsg('로그인 중…');
-  const { data, error } = await sb.auth.signInWithPassword(c);
-  if (error) { _clMsg(/invalid/i.test(error.message) ? '이메일 또는 비밀번호가 틀립니다.' : /confirm/i.test(error.message) ? '이메일 인증이 필요합니다. 받은 메일의 링크를 눌러주세요.' : error.message, true); return; }
-  localStorage.setItem('ledger_last_email', c.email);
-  cloudUser = data.user;
-  closeModal();
+function lockState() { try { return JSON.parse(localStorage.getItem('ledger_lock') || '{}'); } catch { return {}; } }
+function lockSave(s) { localStorage.setItem('ledger_lock', JSON.stringify(s)); }
+function lockShow() { document.body.classList.add('locked'); const el = document.getElementById('lock-screen'); if (el) el.style.display = 'flex'; _lockPin = ''; lockRender(); }
+function lockHide() { document.body.classList.remove('locked'); const el = document.getElementById('lock-screen'); if (el) el.style.display = 'none'; }
+function lockIsOn() { return document.body.classList.contains('locked'); }
+
+function lockRender(msg, bad) {
+  const el = document.getElementById('lock-screen');
+  if (!el) return;
+  const st = lockState(), now = Date.now();
+  const until = st.until && st.until > now ? st.until : 0;
+  const dots = [0, 1, 2, 3].map(i => `<span class="lock-dot ${i < _lockPin.length ? 'on' : ''}"></span>`).join('');
+  const keys = ['1','2','3','4','5','6','7','8','9','','0','⌫'].map(k => k === '' ? '<span></span>'
+    : `<button type="button" class="lock-key" onclick="lockPress('${k === '⌫' ? 'back' : k}')" ${until || _lockBusy ? 'disabled' : ''}>${k}</button>`).join('');
+  const remain = until ? Math.ceil((until - now) / 1000) : 0;
+  const remainTxt = remain >= 60 ? `${Math.ceil(remain / 60)}분` : `${remain}초`;
+  el.innerHTML = `<div class="lock-card">
+    <div style="font-size:36px">📒</div>
+    <div style="font-size:18px;font-weight:700;margin:4px 0 16px">장부관리</div>
+    <div style="font-size:13px;color:#94a3b8;margin-bottom:10px">비밀번호 4자리</div>
+    <div class="lock-dots">${dots}</div>
+    <div class="lock-msg ${bad || until ? 'bad' : ''}">${until ? `${st.count}회 틀려 잠겼습니다 · ${remainTxt} 후 다시 시도` : (msg || (_lockBusy ? '확인 중…' : ''))}</div>
+    <div class="lock-pad">${keys}</div>
+  </div>`;
+  clearTimeout(_lockTimer);
+  if (until) _lockTimer = setTimeout(() => lockRender(), 1000);
+}
+
+function lockPress(k) {
+  if (_lockBusy) return;
+  const st = lockState(), now = Date.now();
+  if (st.until && st.until > now) return;
+  if (st.until && st.until <= now) { st.until = 0; st.count = 0; lockSave(st); }
+  if (k === 'back') _lockPin = _lockPin.slice(0, -1);
+  else if (_lockPin.length < 4 && /^[0-9]$/.test(k)) _lockPin += k;
+  lockRender();
+  if (_lockPin.length === 4) lockSubmit();
+}
+document.addEventListener('keydown', e => {
+  if (!lockIsOn()) return;
+  if (/^[0-9]$/.test(e.key)) lockPress(e.key);
+  else if (e.key === 'Backspace') lockPress('back');
+});
+
+// 비밀번호 검증: 서버 로그인 시도 → 통신 불가 시 이 기기에 남은 해시로 확인(오프라인)
+async function lockVerify(pin) {
+  const derived = await sha256Hex(LOCK_SALT + ':' + pin);
+  const localHash = await sha256Hex('local:' + derived);
+  if (sb) {
+    const { data, error } = await sb.auth.signInWithPassword({ email: LOCK_EMAIL, password: derived });
+    if (!error && data && data.user) {
+      localStorage.setItem('ledger_lock_hash', localHash);
+      _lockDerived = derived;
+      cloudUser = data.user;
+      return 'ok';
+    }
+    const offline = !navigator.onLine || (error && (error.name === 'AuthRetryableFetchError' || /fetch|network|failed/i.test(error.message || '')));
+    if (!offline) return 'wrong';
+  }
+  if (localStorage.getItem('ledger_lock_hash') && localStorage.getItem('ledger_lock_hash') === localHash) { _lockDerived = derived; return 'offline'; }
+  return localStorage.getItem('ledger_lock_hash') ? 'wrong' : 'noserver';
+}
+
+async function lockSubmit() {
+  const pin = _lockPin;
+  _lockBusy = true; lockRender();
+  let r;
+  try { r = await lockVerify(pin); } catch { r = 'noserver'; }
+  _lockBusy = false; _lockPin = '';
+  if (r === 'ok' || r === 'offline') {
+    lockSave({ count: 0, until: 0, level: 0 });
+    lockHide();
+    cloudAfterUnlock(r === 'offline');
+    return;
+  }
+  if (r === 'noserver') { lockRender('서버에 연결할 수 없습니다. 인터넷 연결을 확인한 뒤 다시 시도하세요.', true); return; }
+  const st = lockState();
+  st.count = (st.count || 0) + 1;
+  if (st.count >= 5) {
+    const lv = Math.min(st.level || 0, LOCK_WAITS.length - 1);
+    st.until = Date.now() + LOCK_WAITS[lv] * 60000;
+    st.level = (st.level || 0) + 1;
+    lockSave(st); lockRender();
+    return;
+  }
+  lockSave(st);
+  lockRender(`비밀번호가 틀립니다 (${st.count}/5)`, true);
+}
+
+function lockInit() {
+  lockShow();
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') _lockHiddenAt = Date.now();
+    else if (_lockHiddenAt && Date.now() - _lockHiddenAt > LOCK_RELOCK_MS && !lockIsOn()) lockShow();
+  });
+}
+
+async function cloudAfterUnlock(offline) {
+  if (!cloudUser && sb) { try { const { data } = await sb.auth.getSession(); cloudUser = data && data.session ? data.session.user : null; } catch {} }
   renderCloudStatus();
-  await cloudStart();
+  if (cloudUser && !offline) { await cloudStart(); }
+  else if (cloudUser && offline) { cloudErr = '오프라인 — 연결되면 자동으로 다시 동기화합니다'; renderCloudStatus(); window.addEventListener('online', () => cloudRetry(), { once: true }); }
+  ensureDefaultStamp();
+  if (localStorage.getItem('ledger_backup_pending')) runAutoSheetsBackup({ silent: true });
 }
-async function cloudSignup() {
-  const c = _clCreds();
-  if (!c.email || c.password.length < 6) { _clMsg('이메일과 6자 이상 비밀번호를 입력하세요.', true); return; }
-  _clMsg('가입 중…');
-  const { data, error } = await sb.auth.signUp({ ...c, options: { emailRedirectTo: location.origin + location.pathname } });
-  if (error) { _clMsg(error.message, true); return; }
-  localStorage.setItem('ledger_last_email', c.email);
-  if (data.session) { cloudUser = data.user; closeModal(); renderCloudStatus(); await cloudStart(); return; }
-  _clMsg('가입 메일을 보냈습니다. 메일의 링크를 누른 뒤 여기서 로그인하세요.');
-}
-async function cloudResetPw() {
-  const c = _clCreds();
-  if (!c.email) { _clMsg('이메일을 먼저 입력하세요.', true); return; }
-  const { error } = await sb.auth.resetPasswordForEmail(c.email, { redirectTo: location.origin + location.pathname });
-  _clMsg(error ? error.message : '재설정 메일을 보냈습니다. 메일의 링크를 누르면 새 비밀번호를 정할 수 있습니다.', !!error);
+
+async function cloudReconnect() {
+  if (!sb || !_lockDerived) return false;
+  const { data, error } = await sb.auth.signInWithPassword({ email: LOCK_EMAIL, password: _lockDerived });
+  if (error || !data || !data.user) return false;
+  cloudUser = data.user;
+  return true;
 }
 
 function openCloudAccount() {
   const dirty = _cloudDirty.size;
-  openModal('☁ 서버 동기화', `
+  openModal('☁ 서버 동기화 · 잠금', `
     <div style="font-size:13px;line-height:1.9">
-      <div>계정: <b>${docEsc(cloudUser.email || '')}</b></div>
-      <div>상태: ${cloudErr ? '<span style="color:var(--danger)">오류 — ' + docEsc(cloudErr) + '</span>' : dirty ? '전송 대기 ' + dirty + '건' : '<span style="color:var(--success)">정상</span>'}</div>
+      <div>상태: ${!cloudUser ? '<span style="color:var(--danger)">서버 미연결</span>' : cloudErr ? '<span style="color:var(--danger)">오류 — ' + docEsc(cloudErr) + '</span>' : dirty ? '전송 대기 ' + dirty + '건' : '<span style="color:var(--success)">정상 — 모든 기기가 같은 데이터를 봅니다</span>'}</div>
       <div>마지막 동기화: ${fmtSyncAt(localStorage.getItem('ledger_cloud_last'))}</div>
       <div style="color:var(--gray-500);font-size:12px">기기 ID ${CLOUD_DEVICE_ID}</div>
     </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin:14px 0">
       <button class="btn btn-ghost btn-sm" onclick="cloudForcePull()">⬇ 서버 데이터 다시 받기</button>
       <button class="btn btn-ghost btn-sm" onclick="cloudForcePush()">⬆ 이 기기 데이터로 서버 맞추기</button>
-      <button class="btn btn-ghost btn-sm" onclick="cloudChangePw()">🔑 비밀번호 변경</button>
+      <button class="btn btn-ghost btn-sm" onclick="lockChangePin()">🔑 비밀번호 변경</button>
     </div>
     <div class="modal-footer">
-      <button class="btn btn-danger btn-sm" onclick="cloudLogout()" style="margin-right:auto">로그아웃</button>
+      <button class="btn btn-ghost btn-sm" onclick="closeModal();lockShow()" style="margin-right:auto">🔒 지금 잠그기</button>
       <button class="btn btn-ghost" onclick="closeModal()">닫기</button>
     </div>`);
 }
-async function cloudForcePull() { if (!confirm('서버 데이터로 이 기기를 다시 맞춥니다. (현재 상태는 "복원 직전 상태"로 보관)')) return; closeModal(); try { await cloudPull(); showSheetsBackupStatus('⬇ 서버 데이터로 맞췄습니다', 'success'); } catch (e) { alert('실패: ' + e.message); } }
-async function cloudForcePush() { if (!confirm('이 기기의 데이터로 서버를 덮어씁니다. 다른 기기는 다음에 열 때 이 데이터를 받습니다. 계속할까요?')) return; closeModal(); cloudBusy = true; renderCloudStatus(); try { await cloudPushAll(true); await cloudPull(); showSheetsBackupStatus('⬆ 서버를 이 기기 데이터로 맞췄습니다', 'success'); } catch (e) { alert('실패: ' + e.message); } finally { cloudBusy = false; renderCloudStatus(); } }
-async function cloudChangePw() { const pw = prompt('새 비밀번호 (6자 이상)'); if (!pw) return; if (pw.length < 6) { alert('6자 이상이어야 합니다.'); return; } const { error } = await sb.auth.updateUser({ password: pw }); alert(error ? '변경 실패: ' + error.message : '비밀번호가 변경됐습니다.'); }
-async function cloudLogout() {
-  if (_cloudDirty.size && !confirm('아직 서버에 안 올라간 변경이 있습니다. 그래도 로그아웃할까요?')) return;
-  if (!confirm('로그아웃하면 이 기기는 서버와 동기화되지 않습니다. 데이터는 이 기기에 남습니다.')) return;
-  await sb.auth.signOut();
-  cloudUser = null; cloudReady = false; _cloudDirty.clear(); cloudSaveDirtyList();
-  if (_cloudChannel) { try { sb.removeChannel(_cloudChannel); } catch {} _cloudChannel = null; }
-  clearInterval(_cloudPollTimer);
-  closeModal(); renderCloudStatus();
+async function cloudForcePull() { if (!cloudUser) { alert('서버에 연결되어 있지 않습니다.'); return; } if (!confirm('서버 데이터로 이 기기를 다시 맞춥니다. (현재 상태는 "복원 직전 상태"로 보관)')) return; closeModal(); try { await cloudPull(); showSheetsBackupStatus('⬇ 서버 데이터로 맞췄습니다', 'success'); } catch (e) { alert('실패: ' + e.message); } }
+async function cloudForcePush() { if (!cloudUser) { alert('서버에 연결되어 있지 않습니다.'); return; } if (!confirm('이 기기의 데이터로 서버를 덮어씁니다. 다른 기기는 다음에 열 때 이 데이터를 받습니다. 계속할까요?')) return; closeModal(); cloudBusy = true; renderCloudStatus(); try { await cloudPushAll(true); await cloudPull(); showSheetsBackupStatus('⬆ 서버를 이 기기 데이터로 맞췄습니다', 'success'); } catch (e) { alert('실패: ' + e.message); } finally { cloudBusy = false; renderCloudStatus(); } }
+
+async function lockChangePin() {
+  if (!sb || !cloudUser) { alert('서버에 연결된 상태에서만 바꿀 수 있습니다.'); return; }
+  const cur = prompt('현재 비밀번호 4자리');
+  if (cur == null) return;
+  const curDerived = await sha256Hex(LOCK_SALT + ':' + cur);
+  const chk = await sb.auth.signInWithPassword({ email: LOCK_EMAIL, password: curDerived });
+  if (chk.error) { alert('현재 비밀번호가 틀립니다.'); return; }
+  const a = prompt('새 비밀번호 4자리 (숫자)');
+  if (a == null) return;
+  if (!/^[0-9]{4}$/.test(a)) { alert('숫자 4자리여야 합니다.'); return; }
+  const b = prompt('새 비밀번호 한 번 더');
+  if (a !== b) { alert('두 번 입력이 다릅니다.'); return; }
+  const derived = await sha256Hex(LOCK_SALT + ':' + a);
+  const { error } = await sb.auth.updateUser({ password: derived });
+  if (error) { alert('변경 실패: ' + error.message); return; }
+  _lockDerived = derived;
+  localStorage.setItem('ledger_lock_hash', await sha256Hex('local:' + derived));
+  alert('비밀번호가 변경됐습니다. 다른 기기에서도 새 비밀번호로 들어가면 됩니다.');
 }
 
 let vendors      = DBshared.load('acc_vendors');
@@ -7711,10 +7825,5 @@ document.addEventListener('DOMContentLoaded', () => {
     const msg = { undo: '↩ 복원 직전 상태로 되돌렸습니다', pull: '☁ 구글시트 데이터로 맞췄습니다', snapshot: '↩ 스냅샷 시점으로 되돌렸습니다', latest: '🔎 가장 최근 데이터로 복원했습니다' }[synced] || '☁ 다른 기기의 변경사항을 불러왔습니다';
     showSheetsBackupStatus(msg, 'success');
   }
-  (async () => {
-    const logged = await cloudInit();
-    if (logged) { await cloudStart(); ensureDefaultStamp(); if (localStorage.getItem('ledger_backup_pending')) runAutoSheetsBackup({ silent: true }); return; }
-    if (synced) { ensureDefaultStamp(); if (localStorage.getItem('ledger_backup_pending')) runAutoSheetsBackup({ silent: true }); }
-    else autoSyncFromSheets();
-  })();
+  (async () => { await cloudInit(); lockInit(); })();
 });

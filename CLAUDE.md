@@ -30,11 +30,17 @@ localStorage
 ```
 ※ `acc_` 접두사 키만 시트에 백업된다. 기기 고유 상태는 `ledger_`/`ht_` 접두사를 쓴다.
 
-### 서버 동기화 (Supabase — 로그인 시 데이터의 단일 기준)
+### 앱 잠금 (공용 비밀번호 4자리)
+- 앱을 열면 `#lock-screen`(body.locked)이 전부 가리고 숫자 4자리를 받는다. 5회 오답 → 1/5/15/60분 순 잠금(`ledger_lock`에 count/until/level 보관, 새로고침해도 유지). 15분 이상 백그라운드 후 복귀 시 재잠금.
+- 비밀번호는 저장하지 않는다. `sha256(LOCK_SALT + ':' + pin)`을 공용 계정(`LOCK_EMAIL`, Supabase auth)의 비밀번호로 써서 `signInWithPassword` → 성공 시 해제 + `cloudAfterUnlock`. 통신 불가 시 이전 성공 때 남긴 `ledger_lock_hash`와 비교해 오프라인 해제.
+- 비밀번호 변경: 설정 모달 🔑 → 현재 번호 검증 후 `auth.updateUser({password: 파생키})`. 바꾸면 모든 기기가 새 번호를 쓴다.
+- 이메일 로그인 UI는 없다. 계정 생성/비밀번호 초기화는 SQL(auth.users)로만 한다.
+
+### 서버 동기화 (Supabase — 데이터의 단일 기준)
 - 프로젝트 `ledger` (ap-northeast-2, id lgbhyqneidldvoxwvbdh). 테이블 `records`(컬렉션·사업체·id 단위 레코드, 소프트삭제 `deleted`)와 `kv`(단일 값 키). RLS: 본인 행만.
 - 앱: `SB_URL`/`SB_KEY`(공개 publishable 키)로 supabase-js(CDN) 사용. `DB.save`/`DBshared.save` → `cloudQueue(key)` → 700ms 후 `cloudFlush` → 레코드 단위 diff upsert(메모리 shadow 비교), 사라진 id는 `deleted=true`.
 - 레코드 컬렉션: `CLOUD_RECORD_COLLECTIONS` (transactions/vendors/items/quotes/recurring/expense_candidates/deposits). 나머지 `acc_*`는 kv. `CLOUD_LOCAL_ONLY` 키는 기기 전용.
-- 시작: `cloudInit` → 세션 있으면 `cloudStart`(미전송분 push → `cloudPull`로 캐시 교체 → `reloadGlobalsFromLocal` → Realtime 구독 + 45초 주기 확인). 서버가 비어 있으면 확인 후 로컬 전체 업로드.
+- 시작: `cloudInit`(클라이언트 생성) → `lockInit` → 해제 시 `cloudAfterUnlock` → `cloudStart`(미전송분 push → `cloudPull`로 캐시 교체 → `reloadGlobalsFromLocal` → Realtime 구독 + 45초 주기 확인). 서버에 살아있는 레코드가 없으면 확인 후 로컬 전체 업로드.
 - 로그인 상태에서는 시트 autoSync(pull/충돌 모달) 비활성, 시트 백업은 force push 사본만. 복원류(스냅샷/최신찾기/되돌리기)는 reload 전 `cloudMarkAllDirty()` → 다음 시작 때 `cloudPushAll(true)`로 서버 전체 반영.
 - 모달 열린 중 수신 시 데이터만 갱신하고 화면은 `closeModal`에서 반영(`_cloudRenderPending`).
 
