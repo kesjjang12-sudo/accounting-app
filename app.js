@@ -1205,14 +1205,18 @@ function restoreAll(input) {
 
 function switchBusiness(id) {
   if (id === currentBizId) return;
+  if (currentPage === 'docs' && document.getElementById('doc-form')) { try { DB.save('acc_doc_draft_' + docTpl, docCollect()); } catch {} }
+  docStates = {};
   currentBizId = id;
   saveCurrentBiz();
   // 거래처·품목은 공유이므로 재로드 불필요
   transactions = DB.load('acc_transactions');
   companyInfo  = DB.load('acc_company', '{}');
   quotes       = DB.load('acc_quotes');
+  _candidatesCache = null;
   renderSidebarBiz();
   render(currentPage);
+  ensureDefaultStamp();
   const mc = document.querySelector('.main-content');
   if (mc) mc.scrollTop = 0;
   window.scrollTo(0, 0);
@@ -1977,7 +1981,10 @@ function renderDocs(el) {
   const roleLabels = docTpl === 'contract'
     ? [['supplier', '내가 공급자 (을)'], ['buyer', '내가 공급받는자 (갑)']]
     : [['buyer', '내가 발주처 (검수하는 쪽)'], ['supplier', '내가 납품업체']];
-  const roleHtml = `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:13px"><b>내 입장</b>
+  const bizSel = businesses.length > 1 ? `<div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;font-size:13px"><b>내 사업체</b>
+    <select class="form-control" style="width:auto;min-width:180px" onchange="switchBusiness(this.value)">${businesses.map(b => `<option value="${b.id}" ${b.id === currentBizId ? 'selected' : ''}>${docEsc(b.name)}</option>`).join('')}</select>
+    <span style="font-size:11px;color:var(--gray-400)">바꾸면 내 회사 정보·도장·거래내역이 그 사업체 것으로 바뀝니다</span></div>` : '';
+  const roleHtml = bizSel + `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:13px"><b>내 입장</b>
     ${roleLabels.map(([v, l]) => `<label style="cursor:pointer"><input type="radio" name="doc-role" value="${v}" ${st.role === v ? 'checked' : ''}> ${l}</label>`).join('')}</div>`;
 
   let fields = '';
@@ -3318,18 +3325,23 @@ function openVendorDetail(vendorId, rangeStart, rangeEnd) {
   openModal(`${vendor ? vendor.companyName : (payee || '')} — 거래 상세`, html, true);
 
   setTimeout(() => {
-    document.querySelectorAll('.tx-checkbox').forEach(cb => {
+    document.querySelectorAll('#modal-body .tx-checkbox').forEach(cb => {
       cb.addEventListener('change', updateCheckedCount);
     });
   }, 0);
 }
 
+// 거래 상세 모달 안의 체크만 — 숨겨진 거래내역 페이지의 선택 체크박스가 섞여 같은 거래가 두 번 들어가던 문제 방지
+function modalCheckedTxIds() {
+  return [...new Set([...document.querySelectorAll('#modal-body .tx-checkbox:checked')].map(cb => cb.value))];
+}
+
 function toggleAllTx(masterCb) {
-  document.querySelectorAll('.tx-checkbox').forEach(cb => cb.checked = masterCb.checked);
+  document.querySelectorAll('#modal-body .tx-checkbox').forEach(cb => cb.checked = masterCb.checked);
   updateCheckedCount();
 }
 function updateCheckedCount() {
-  const cnt = document.querySelectorAll('.tx-checkbox:checked').length;
+  const cnt = modalCheckedTxIds().length;
   const el  = document.getElementById('checked-count');
   if (el) el.textContent = cnt;
 }
@@ -3401,7 +3413,7 @@ function unmarkPaid(txId) {
 }
 
 function bulkMarkPaid() {
-  const checked = [...document.querySelectorAll('.tx-checkbox:checked')].map(cb => cb.value);
+  const checked = modalCheckedTxIds();
   const unpaid  = checked.filter(id => { const t = transactions.find(t => t.id === id); return t && !t.isPaid; });
   if (!unpaid.length) { alert('선택된 미결제 거래가 없습니다.'); return; }
   if (!confirm(`${unpaid.length}건을 오늘(${today()}) 결제완료 처리하시겠습니까?`)) return;
@@ -3479,14 +3491,14 @@ function markPaidFromList(txId) {
 // ── STATEMENT / EXCEL ─────────────────────────────────────
 function downloadStatementFromModal() {
   const vendorId = decodeURIComponent(document.getElementById('detail-vendor-id').value);
-  const checked  = [...document.querySelectorAll('.tx-checkbox:checked')].map(cb => cb.value);
+  const checked  = modalCheckedTxIds();
   if (!checked.length) { alert('거래를 선택하세요.'); return; }
   downloadStatement(checked, vendorId);
 }
 
 function downloadExcelFromModal() {
   const vendorId = decodeURIComponent(document.getElementById('detail-vendor-id').value);
-  const checked  = [...document.querySelectorAll('.tx-checkbox:checked')].map(cb => cb.value);
+  const checked  = modalCheckedTxIds();
   if (!checked.length) { alert('거래를 선택하세요.'); return; }
   downloadExcel(checked, vendorId);
 }
