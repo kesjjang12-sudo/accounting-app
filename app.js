@@ -2099,8 +2099,8 @@ function docPickTx() {
     const m = items.find(x => x.id === i.itemId) || {};
     const q = docFmtN(i.quantity);
     return docTpl === 'contract'
-      ? { name: i.itemName || '', spec: m.spec || '', unit: i.unit || '', qty: q, price: docFmtN(i.unitPrice) }
-      : { name: i.itemName || '', spec: m.spec || '', unit: i.unit || '', ord: q, del: q, pass: q, rej: '', note: '' };
+      ? { name: i.itemName || '', spec: i.spec || m.spec || '', unit: i.unit || '', qty: q, price: docFmtN(i.unitPrice) }
+      : { name: i.itemName || '', spec: i.spec || m.spec || '', unit: i.unit || '', ord: q, del: q, pass: q, rej: '', note: '' };
   });
   docRenderRows();
 }
@@ -3520,6 +3520,7 @@ function generateStatementHTML(txs, vendor) {
       rows += `<tr>
         <td>${t.date}</td>
         <td style="text-align:left;padding-left:8px">${i.itemName}</td>
+        <td>${docEsc(lineSpec(i))}</td>
         <td>${i.unit||''}</td>
         <td style="text-align:right">${fmt(i.quantity)}</td>
         <td style="text-align:right">${fmt(i.unitPrice)}</td>
@@ -3577,9 +3578,9 @@ ${STAMP_CSS}
   </div>
 </div>
 <table>
-  <thead><tr><th style="width:72px">날짜</th><th>품목명</th><th style="width:44px">단위</th><th style="width:44px">수량</th><th style="width:70px">단가</th><th style="width:80px">공급가액</th><th style="width:70px">세액</th><th style="width:84px">합계금액</th><th style="width:70px">비고</th></tr></thead>
+  <thead><tr><th style="width:72px">날짜</th><th>품목명</th><th style="width:70px">규격</th><th style="width:44px">단위</th><th style="width:44px">수량</th><th style="width:70px">단가</th><th style="width:80px">공급가액</th><th style="width:70px">세액</th><th style="width:84px">합계금액</th><th style="width:70px">비고</th></tr></thead>
   <tbody>${rows}
-  <tr class="total-row"><td colspan="5" style="text-align:right">합 계</td><td style="text-align:right">${fmt(grandAmt)}</td><td style="text-align:right">${fmt(grandTax)}</td><td style="text-align:right">${fmt(grandAmt+grandTax)}</td><td></td></tr>
+  <tr class="total-row"><td colspan="6" style="text-align:right">합 계</td><td style="text-align:right">${fmt(grandAmt)}</td><td style="text-align:right">${fmt(grandTax)}</td><td style="text-align:right">${fmt(grandAmt+grandTax)}</td><td></td></tr>
   </tbody>
 </table>
 <div class="summary">
@@ -3600,19 +3601,19 @@ function downloadExcel(txIds, vendorId) {
 
   const wb   = XLSX.utils.book_new();
   const rows = [['거래명세서'], [`거래처: ${vendorName}`, '', '', '', '', `발행일: ${today()}`], [],
-    ['날짜','구분','품목명','단위','수량','단가','공급가액','세액(10%)','합계금액','결제방법','결제상태','결제일','비고']];
+    ['날짜','구분','품목명','규격','단위','수량','단가','공급가액','세액(10%)','합계금액','결제방법','결제상태','결제일','비고']];
   let gAmt = 0, gTax = 0;
   selectedTxs.forEach(t => {
     t.items.forEach(i => {
-      rows.push([t.date, t.type, i.itemName, i.unit||'', i.quantity, i.unitPrice, i.amount, i.tax, i.amount+i.tax,
+      rows.push([t.date, t.type, i.itemName, lineSpec(i), i.unit||'', i.quantity, i.unitPrice, i.amount, i.tax, i.amount+i.tax,
         t.paymentMethod||'', t.isPaid ? '결제완료' : (t.type==='매출'?'미수금':'미지급'), t.paidAt||'', i.notes||'']);
       gAmt += i.amount; gTax += i.tax;
     });
   });
-  rows.push([], ['','','','','','합 계', gAmt, gTax, gAmt+gTax, '', '', '', '']);
+  rows.push([], ['','','','','','','합 계', gAmt, gTax, gAmt+gTax, '', '', '', '']);
 
   const ws1 = XLSX.utils.aoa_to_sheet(rows);
-  ws1['!cols'] = [{wch:12},{wch:6},{wch:20},{wch:6},{wch:6},{wch:10},{wch:12},{wch:12},{wch:12},{wch:10},{wch:10},{wch:12},{wch:16}];
+  ws1['!cols'] = [{wch:12},{wch:6},{wch:20},{wch:12},{wch:6},{wch:6},{wch:10},{wch:12},{wch:12},{wch:12},{wch:10},{wch:10},{wch:12},{wch:16}];
   XLSX.utils.book_append_sheet(wb, ws1, '거래명세서');
 
   XLSX.writeFile(wb, `거래명세서_${vendorName}_${today().replace(/-/g,'')}.xlsx`);
@@ -4092,7 +4093,7 @@ async function handlePhotoTx(input) {
 
   const myName = (companyInfo.name || '').trim();
   const ask = `이 사진(거래명세서/영수증/계산서)에서 거래 정보를 추출해 아래 JSON 형식으로만 답해라. 설명·마크다운 금지.
-{"date":"YYYY-MM-DD","type":"매출|매입","vendorName":"상대 거래처명","items":[{"itemName":"","unit":"","quantity":0,"unitPrice":0,"tax":null}],"memo":""}
+{"date":"YYYY-MM-DD","type":"매출|매입","vendorName":"상대 거래처명","items":[{"itemName":"","spec":"","unit":"","quantity":0,"unitPrice":0,"tax":null}],"memo":""}
 - 내 회사는 "${myName || '(미설정)'}"다. 내 회사가 공급자면 "매출", 공급받는자면 "매입". 판단 어려우면 "매입".
 - vendorName은 내 회사가 아닌 상대방 상호.
 - 수량·단가 구분이 없으면 quantity 1, unitPrice에 금액.
@@ -4136,7 +4137,7 @@ async function handlePhotoTx(input) {
     const amount = qty * price;
     const tax    = (ri.tax != null && ri.tax !== '') ? (Number(ri.tax) || 0) : (taxExempt ? 0 : Math.round(amount * 0.1));
     return { _id: uid(), itemId: master ? master.id : '', itemName: name,
-      unit: ri.unit || (master && master.unit) || '', quantity: qty, unitPrice: price,
+      spec: (ri.spec || '').trim() || (master && master.spec) || '', unit: ri.unit || (master && master.unit) || '', quantity: qty, unitPrice: price,
       amount, tax, taxExempt, notes: '' };
   });
 
@@ -4226,7 +4227,7 @@ function openTransactionModal(prefill = null, editId = null) {
     <div class="items-table-wrap" id="tx-items-table">
       <table>
         <thead><tr>
-          <th style="width:210px">품목명</th><th style="width:55px">단위</th>
+          <th style="width:210px">품목명</th><th style="width:110px">규격</th><th style="width:55px">단위</th>
           <th style="width:90px">수량</th><th style="width:110px">단가</th>
           <th style="width:110px">공급가액</th><th style="width:90px">세액(10%)</th>
           <th style="width:100px">비고</th><th style="width:36px"></th>
@@ -4388,8 +4389,10 @@ function recentUnitPrice(itemName, type, vendorId) {
   return (vendorId && hits.find(h => h.vendorId === vendorId)) || hits[0];
 }
 
+function lineSpec(i) { return (i && i.spec) || ((items.find(m => m.id === (i && i.itemId)) || {}).spec) || ''; }
+
 function newLineItem() {
-  return { _id: uid(), itemId: '', itemName: '', unit: '', quantity: 1, unitPrice: 0, amount: 0, tax: 0, taxExempt: false, notes: '' };
+  return { _id: uid(), itemId: '', itemName: '', spec: '', unit: '', quantity: 1, unitPrice: 0, amount: 0, tax: 0, taxExempt: false, notes: '' };
 }
 function addLineItem()     { txLineItems.push(newLineItem()); renderLineItems(); }
 function removeLineItem(i) { txLineItems.splice(i,1); if(!txLineItems.length) txLineItems.push(newLineItem()); renderLineItems(); }
@@ -4404,6 +4407,7 @@ function renderLineItems() {
           oninput="onItemSearch(this,${idx})" autocomplete="off">
         <div class="search-dropdown hidden" id="item-dd-${idx}"></div>
       </div></td>
+      <td><input data-idx="${idx}" data-field="spec"      class="line-field" value="${docEsc(line.spec || '')}" placeholder="규격" style="min-width:90px" oninput="onLineChange(this)"></td>
       <td><input data-idx="${idx}" data-field="unit"      class="line-field" value="${line.unit}"      oninput="onLineChange(this)"></td>
       <td><div style="display:flex;gap:2px;align-items:center"><input data-idx="${idx}" data-field="quantity"  class="line-field" type="text" inputmode="numeric" value="${line.quantity ? Number(line.quantity).toLocaleString('ko-KR') : ''}"  style="min-width:70px;${line.quantity < 0 ? 'color:#dc2626' : ''}" oninput="onLineNumChange(this)"><button type="button" class="btn btn-ghost btn-sm" style="padding:2px 6px" title="+/- 전환 (반품·차감)" onclick="toggleLineSign(${idx},'quantity')">±</button></div></td>
       <td><div style="display:flex;gap:2px;align-items:center"><input data-idx="${idx}" data-field="unitPrice" class="line-field" type="text" inputmode="numeric" value="${line.unitPrice ? Number(line.unitPrice).toLocaleString('ko-KR') : ''}" style="min-width:90px;${line.unitPrice < 0 ? 'color:#dc2626' : ''}" oninput="onLineNumChange(this)"><button type="button" class="btn btn-ghost btn-sm" style="padding:2px 6px" title="+/- 전환 (할인·차감)" onclick="toggleLineSign(${idx},'unitPrice')">±</button></div></td>
@@ -4421,7 +4425,7 @@ function updateLineItemTotals() {
   const totalAmt = txLineItems.reduce((s, l) => s + (l.amount||0), 0);
   const totalTax = txLineItems.reduce((s, l) => s + (l.tax||0), 0);
   tfoot.innerHTML = `<tr style="background:var(--gray-50);font-weight:700;border-top:2px solid var(--gray-200)">
-    <td colspan="4" style="text-align:right;padding:8px 12px;font-size:13px;color:var(--gray-500)">합 계</td>
+    <td colspan="5" style="text-align:right;padding:8px 12px;font-size:13px;color:var(--gray-500)">합 계</td>
     <td class="readonly-cell" id="total-amt-cell">${fmt(totalAmt)}</td>
     <td class="readonly-cell" id="total-tax-cell">${fmt(totalTax)}</td>
     <td class="readonly-cell" colspan="2" style="color:var(--primary)">${fmt(totalAmt + totalTax)}원</td>
@@ -4495,7 +4499,7 @@ function selectItem(idx, itemId) {
   const recent    = recentUnitPrice(item.name, txType, vendorId);
   const unitPrice = recent ? recent.price : (txType === '매출' ? item.salesPrice : item.purchasePrice);
   const qty       = txLineItems[idx].quantity || 1;
-  txLineItems[idx] = { ...txLineItems[idx], itemId: item.id, itemName: item.name, unit: item.unit||'',
+  txLineItems[idx] = { ...txLineItems[idx], itemId: item.id, itemName: item.name, spec: txLineItems[idx].spec || item.spec || '', unit: item.unit||'',
     unitPrice: unitPrice||0, taxExempt: item.taxExempt,
     amount: qty*(unitPrice||0), tax: item.taxExempt ? 0 : Math.round(qty*(unitPrice||0)*0.1) };
   renderLineItems();
@@ -4514,7 +4518,7 @@ function applyItemNameFix(idx, name) {
                   : master ? (txType === '매출' ? master.salesPrice : master.purchasePrice) || 0
                   : line.unitPrice || 0;
   const taxExempt = master ? master.taxExempt : line.taxExempt;
-  txLineItems[idx] = { ...line, itemId: master ? master.id : '', itemName: name,
+  txLineItems[idx] = { ...line, itemId: master ? master.id : '', itemName: name, spec: line.spec || (master && master.spec) || '',
     unit: (recent && recent.unit) || (master && master.unit) || line.unit || '',
     unitPrice, taxExempt,
     amount: qty * unitPrice, tax: taxExempt ? 0 : Math.round(qty * unitPrice * 0.1) };
@@ -4530,7 +4534,7 @@ function onLineNumChange(input) {
 function onLineChange(input) {
   const idx   = Number(input.dataset.idx);
   const field = input.dataset.field;
-  txLineItems[idx][field] = (field==='unit'||field==='notes') ? input.value : parseSignedNum(input.value);
+  txLineItems[idx][field] = (field==='unit'||field==='notes'||field==='spec') ? input.value : parseSignedNum(input.value);
   const line  = txLineItems[idx];
   line.amount = line.quantity * line.unitPrice;
   line.tax    = line.taxExempt ? 0 : Math.round(line.amount * 0.1);
@@ -4739,7 +4743,7 @@ function downloadStatementFormExcel() {
         gAmt += i.amount; gTax += i.tax;
         const master = items.find(m => m.id === i.itemId);
         lineRows.push([t.date.slice(0,4), t.date.slice(5,7), t.date.slice(8,10),
-          i.itemName, (master && master.spec) || '', i.quantity, i.unitPrice, i.amount, i.tax]);
+          i.itemName, lineSpec(i), i.quantity, i.unitPrice, i.amount, i.tax]);
       });
     });
     const targetRows = Math.max(lineRows.length + 3, 15);
@@ -5268,7 +5272,7 @@ function openQuoteModal(id = null, type = '견적서') {
     <div class="items-table-wrap">
       <table>
         <thead><tr>
-          <th style="width:210px">품목명</th><th style="width:55px">단위</th>
+          <th style="width:210px">품목명</th><th style="width:110px">규격</th><th style="width:55px">단위</th>
           <th style="width:90px">수량</th><th style="width:110px">단가</th>
           <th style="width:110px">공급가액</th><th style="width:90px">세액(10%)</th>
           <th style="width:100px">비고</th><th style="width:36px"></th>
@@ -5380,6 +5384,7 @@ function generateQuoteHTML(q, vendor) {
     rows += `<tr>
       <td style="text-align:center">${n+1}</td>
       <td style="text-align:left;padding-left:8px">${i.itemName}</td>
+      <td>${docEsc(lineSpec(i))}</td>
       <td>${i.unit||''}</td>
       <td style="text-align:right">${fmt(i.quantity)}</td>
       <td style="text-align:right">${fmt(i.unitPrice)}</td>
@@ -5448,7 +5453,7 @@ ${STAMP_CSS}
 </div>
 <table>
   <thead><tr>
-    <th style="width:28px">No</th><th>품목명</th><th style="width:44px">단위</th>
+    <th style="width:28px">No</th><th>품목명</th><th style="width:70px">규격</th><th style="width:44px">단위</th>
     <th style="width:44px">수량</th><th style="width:70px">단가</th>
     <th style="width:80px">공급가액</th><th style="width:70px">세액</th>
     <th style="width:84px">합계금액</th><th style="width:70px">비고</th>
@@ -5456,7 +5461,7 @@ ${STAMP_CSS}
   <tbody>
     ${rows}
     <tr class="total-row">
-      <td colspan="5" style="text-align:right">합 계</td>
+      <td colspan="6" style="text-align:right">합 계</td>
       <td style="text-align:right">${fmt(grandAmt)}</td>
       <td style="text-align:right">${fmt(grandTax)}</td>
       <td style="text-align:right">${fmt(grandAmt+grandTax)}</td>
@@ -7498,7 +7503,7 @@ function htExportGroups() {
 function htBuildInvoices(groups, o) {
   const warns = [], out = [], t0 = today();
   const cap = d => d > t0 ? t0 : d;
-  const specOf = i => (items.find(m => m.id === i.itemId) || {}).spec || '';
+  const specOf = lineSpec;
 
   groups.forEach(g => {
     const label = `${g.vendor.companyName} ${g.month}`;
