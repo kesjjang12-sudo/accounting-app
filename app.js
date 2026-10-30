@@ -1882,7 +1882,7 @@ const DOC_TPLS = {
 const DOC_FIELDS = {
   contract:   ['title','date','delivDate','delivPlace','freight','vatMode','payMethod','payTerm','account','inspDays','warrantyMonths','lateRate','period','court','special'],
   inspection: ['no','poNo','title','date','delivDate','place','inspector','inspectorRank','witness','witnessRank','judge','opinion','action'],
-  explain:    ['to','title','date','intro','conclusion','basis','extra','future','attach','closing']
+  explain:    ['to','title','date','intro','conclusion','prevName','prevBno','prevRep','changeDate','changeNote','basis','extra','future','attach','closing']
 };
 const DOC_PLACEHOLDER_RE = /\[[^\]\n]*(입력|기재)[^\]\n]*\]/;
 const DOC_CHECK_ITEMS = ['수량 확인', '규격·사양 일치', '외관 상태', '포장 상태', '성능·작동 상태'];
@@ -1915,6 +1915,17 @@ function numToKorean(n) {
   return parts.join('');
 }
 
+function josaRo(word) {
+  const c = String(word || '').trim().slice(-1).charCodeAt(0);
+  if (!(c >= 0xAC00 && c <= 0xD7A3)) return '(으)로';
+  const jong = (c - 0xAC00) % 28;
+  return jong === 0 || jong === 8 ? '로' : '으로';
+}
+
+function bizCompany(id) {
+  try { return JSON.parse(localStorage.getItem('acc_company__' + id) || '{}') || {}; } catch { return {}; }
+}
+
 function docDefaults(tpl) {
   const ci = companyInfo || {};
   const me = { name: ci.name || '', rep: ci.representative || '', bno: ci.businessNumber || '', addr: ci.address || '', tel: ci.tel || '' };
@@ -1924,10 +1935,14 @@ function docDefaults(tpl) {
     f: { title: '', date: today(), delivDate: '', delivPlace: '', freight: '공급자', vatMode: '별도', payMethod: '계좌이체',
          payTerm: '검수 합격 후 30일 이내', account: '', inspDays: '7', warrantyMonths: '12', lateRate: '0.1', period: '', court: '', special: '' }
   };
+  const prevBiz = businesses.find(b => b.id !== currentBizId);
+  const pc = prevBiz ? bizCompany(prevBiz.id) : {};
+  const prevName = pc.name || (prevBiz ? prevBiz.name : '');
+  const sameRep = prevName && pc.representative && pc.representative === me.rep;
   if (tpl === 'explain') return {
     role: 'supplier', vendorId: '', stamp: true, me, ot,
     rows: [
-      { doc: '전자세금계산서(수정분) · 거래명세서', name: '프레시아 800G·600G', reason: '대금 청구 및 정산을 위한 최종 발주처(고객사) 기준 명칭' },
+      { doc: `전자세금계산서(수정분) · 거래명세서${prevName ? ` (${prevName} 명의 발행)` : ''}`, name: '프레시아 800G·600G', reason: '대금 청구 및 정산을 위한 최종 발주처(고객사) 기준 명칭' },
       { doc: '디자인 시안(인쇄사양서)', name: '유러피안 800g·600g', reason: '실제 박스 겉면에 인쇄된 브랜드 명칭' },
       { doc: '검수보고서(1차 제출분)', name: '와이팜 800G·600G/500G', reason: '공장 생산 및 검수 파트에서 구분하는 내부 프로젝트 명칭' }
     ],
@@ -1935,10 +1950,12 @@ function docDefaults(tpl) {
       to: '', title: '4월분 납품 관련 서류상 품목명 표기 상이에 대한 소명', date: today(),
       intro: '안녕하십니까.\n4월분 거래 증빙 자료 중 동일한 박스 제작 건에 대해 서류별 품목명이 다르게 기재된 사유를 아래와 같이 설명드립니다.',
       conclusion: '전자세금계산서, 인쇄사양서, 검수보고서에 기재된 품목은 모두 박스 사이즈와 규격(800G·600G)이 일치하는 동일 품목입니다.\n해당 건은 동일한 박스 규격에 인쇄 내용만 다르게 들어가는 작업이었으며, 업무 진행 단계와 담당 파트에 따라 부르는 명칭이 달라 서류상 표기에 차이가 생겼습니다.',
+      prevName, prevBno: pc.businessNumber || '', prevRep: pc.representative || '', changeDate: '',
+      changeNote: prevName ? `4월분 납품 및 세금계산서 발행은 이전 사업자인 ${prevName}${pc.businessNumber ? `(사업자등록번호 ${pc.businessNumber})` : ''} 명의로 진행되었으며, 이후 사업자 변경에 따라 ${me.name || '현 사업자'}${me.bno ? `(사업자등록번호 ${me.bno})` : ''} 명의로 거래를 이어가고 있습니다.${sameRep ? `\n두 사업자의 대표자는 ${me.rep}${josaRo(me.rep)} 동일합니다.` : ''}\n[사업자 변경 사유를 입력하세요]` : '',
       basis: '이미 제출한 인쇄사양서의 박스 사이즈 및 규격을 확인하시면, 청구된 거래명세서상의 품목과 동일한 제품임을 확인하실 수 있습니다.\n즉, 물리적으로 같은 박스에 대해 영업·디자인·생산 파트별로 명칭만 다르게 기재된 표기상의 차이입니다.',
       extra: '[검수보고서에 함께 기재된 500G의 사유를 입력하세요]',
       future: '향후 제출하는 모든 서류의 품목명을 발주처 기준으로 일원화하여 업무에 혼선이 없도록 관리하겠습니다.',
-      attach: '인쇄사양서(디자인 시안) 사본 1부\n전자세금계산서(수정분) 사본 1부\n거래명세서 사본 1부\n검수보고서(1차 제출분) 사본 1부',
+      attach: '인쇄사양서(디자인 시안) 사본 1부\n전자세금계산서(수정분) 사본 1부\n거래명세서 사본 1부\n검수보고서(1차 제출분) 사본 1부' + (prevName ? `\n사업자등록증 사본(${prevName}, ${me.name || '현 사업자'}) 각 1부` : ''),
       closing: '이 점 너른 양해 부탁드립니다.\n감사합니다.'
     }
   };
@@ -2036,6 +2053,17 @@ function renderDocs(el) {
       ${inp('doc-f-date', '작성일', f.date)}
       ${big('doc-f-intro', '서두 (인사)', f.intro, '', 3)}
       ${big('doc-f-conclusion', '1. 결론', f.conclusion, '한 문장으로 먼저 결론을 적으세요', 4)}
+    </div>
+    <div class="card" style="margin:12px 0"><div class="card-title" style="margin-bottom:8px">사업자 변경 <span style="font-size:11px;font-weight:400;color:var(--gray-400)">(이전 사업자 명의 거래가 있을 때 — 상호를 비우면 문서에서 빠짐)</span></div>
+      ${businesses.length > 1 ? `<div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;font-size:13px">이전 사업자 불러오기
+        <select class="form-control" style="width:auto;min-width:160px" onchange="docPickPrevBiz(this.value)"><option value="">선택</option>${businesses.filter(b => b.id !== currentBizId).map(b => `<option value="${b.id}">${docEsc(b.name)}</option>`).join('')}</select></div>` : ''}
+      <div class="form-grid">
+        ${inp('doc-f-prevName', '이전 상호', f.prevName, '예: 실버캐슬')}
+        ${inp('doc-f-prevBno', '이전 사업자번호', f.prevBno)}
+        ${inp('doc-f-prevRep', '이전 대표자', f.prevRep)}
+        ${inp('doc-f-changeDate', '사업자 변경 시점', f.changeDate, '예: 2026년 5월 / 2026-05-01')}
+        ${big('doc-f-changeNote', '사업자 변경 경위 (문서 2항)', f.changeNote, '', 4)}
+      </div>
     </div>`;
     fieldsAfter = `<div class="form-grid">
       ${big('doc-f-basis', '3. 동일 품목 확인 근거', f.basis, '어떤 증빙에서 확인할 수 있는지', 4)}
@@ -2129,6 +2157,13 @@ function docPickVendor() {
   docRenderTxOptions();
 }
 
+function docPickPrevBiz(id) {
+  if (!id) return;
+  const c = bizCompany(id), b = businesses.find(x => x.id === id) || {};
+  const set = (k, v) => { const el = document.getElementById('doc-f-' + k); if (el) el.value = v || ''; };
+  set('prevName', c.name || b.name); set('prevBno', c.businessNumber); set('prevRep', c.representative);
+}
+
 function docPickTx() {
   const t = transactions.find(t => t.id === document.getElementById('doc-tx').value);
   if (!t) return;
@@ -2206,8 +2241,9 @@ function docGenerate() {
   DB.save('acc_doc_draft_' + docTpl, d);
   const other = d.ot.name || '상대방';
   if (docTpl === 'explain') {
-    const left = [...Object.values(d.f), ...d.rows.flatMap(r => Object.values(r))].filter(v => DOC_PLACEHOLDER_RE.test(String(v || '')));
-    if (left.length && !confirm(`아직 채우지 않은 안내 문구가 있습니다:\n\n${left.map(v => '• ' + String(v).match(DOC_PLACEHOLDER_RE)[0]).join('\n')}\n\n그대로 생성할까요? (문서에 그 문구가 그대로 찍힙니다)`)) return;
+    const left = [...Object.values(d.f), ...d.rows.flatMap(r => Object.values(r))].filter(v => DOC_PLACEHOLDER_RE.test(String(v || ''))).map(v => String(v).match(DOC_PLACEHOLDER_RE)[0]);
+    if (d.f.prevName && !d.f.changeDate) left.push('[사업자 변경 시점 — 비어 있음]');
+    if (left.length && !confirm(`아직 채우지 않은 안내 문구가 있습니다:\n\n${left.map(v => '• ' + v).join('\n')}\n\n그대로 생성할까요? (문서에 그 문구가 그대로 찍힙니다)`)) return;
     openDocWindow(`소명서_${(d.f.title || '').slice(0, 20)}_${d.f.date}`, docExplainHtml(d));
     return;
   }
@@ -2344,6 +2380,7 @@ function docExplainHtml(d) {
     ${rows.map((r, i) => `<tr><td>${i + 1}</td><td class="l">${docNl(r.doc)}</td><td class="l"><b>${docNl(r.name)}</b></td><td class="l">${docNl(r.reason)}</td></tr>`).join('')}</tbody></table>` : '';
   const secs = [
     ['결론', f.conclusion ? para(f.conclusion) : ''],
+    ['사업자 변경 경위', f.changeNote ? para(f.changeNote) : ''],
     ['서류별 품목명 표기 대조', table],
     ['동일 품목 확인 근거', f.basis ? para(f.basis) : ''],
     ['추가 설명', f.extra ? para(f.extra) : ''],
@@ -2355,7 +2392,8 @@ function docExplainHtml(d) {
     <table class="grid info">
       <tr><th>수 신</th><td>${docEsc(f.to) || docBlank('', 12)}</td></tr>
       <tr><th>제 목</th><td><b>${docEsc(f.title)}</b></td></tr>
-      <tr><th>발 신</th><td>${docEsc(me.name)}${me.rep ? ` (대표 ${docEsc(me.rep)})` : ''}</td></tr>
+      <tr><th>발 신</th><td>${docEsc(me.name)}${f.prevName ? ` (구 ${docEsc(f.prevName)})` : ''}${me.rep ? ` · 대표 ${docEsc(me.rep)}` : ''}</td></tr>
+      ${f.prevName ? `<tr><th>사업자 변경</th><td>${docEsc(f.prevName)}${f.prevBno ? ` (${docEsc(f.prevBno)})` : ''} → ${docEsc(me.name)}${me.bno ? ` (${docEsc(me.bno)})` : ''}${f.changeDate ? ` · ${docEsc(f.changeDate)} 변경` : ''}</td></tr>` : ''}
       <tr><th>작성일</th><td>${docDateKo(f.date)}</td></tr>
     </table>
     <div style="margin:14px 0 6px">${para(f.intro)}</div>
@@ -2364,7 +2402,7 @@ function docExplainHtml(d) {
     <div style="margin:14px 0">${para(f.closing)}</div>
     <div class="dt">${docDateKo(f.date)}</div>
     <table class="sign" style="width:60%;margin-left:auto"><tr><td class="sg"><div class="sgt">발 신</div>
-      <div>상 호 : ${docBlank(me.name, 7)}</div><div>사업자번호 : ${docBlank(me.bno, 6)}</div><div>주 소 : ${docBlank(me.addr, 8)}</div>${me.tel ? `<div>연락처 : ${docEsc(me.tel)}</div>` : ''}
+      <div>상 호 : ${docBlank(me.name, 7)}${f.prevName ? ` <span style="font-size:11px;color:#555">(구 ${docEsc(f.prevName)})</span>` : ''}</div><div>사업자번호 : ${docBlank(me.bno, 6)}</div><div>주 소 : ${docBlank(me.addr, 8)}</div>${me.tel ? `<div>연락처 : ${docEsc(me.tel)}</div>` : ''}
       <div class="sgs">대 표 자 : ${docBlank(me.rep, 4)} &nbsp;&nbsp;${stampMark(d.stamp)}</div></td></tr></table>`);
 }
 
