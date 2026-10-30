@@ -1876,12 +1876,15 @@ let docStates = {};
 
 const DOC_TPLS = {
   contract:   { label: '📝 물품공급계약서' },
-  inspection: { label: '✅ 검수보고서' }
+  inspection: { label: '✅ 검수보고서' },
+  explain:    { label: '📮 소명서' }
 };
 const DOC_FIELDS = {
   contract:   ['title','date','delivDate','delivPlace','freight','vatMode','payMethod','payTerm','account','inspDays','warrantyMonths','lateRate','period','court','special'],
-  inspection: ['no','poNo','title','date','delivDate','place','inspector','inspectorRank','witness','witnessRank','judge','opinion','action']
+  inspection: ['no','poNo','title','date','delivDate','place','inspector','inspectorRank','witness','witnessRank','judge','opinion','action'],
+  explain:    ['to','title','date','intro','conclusion','basis','extra','future','attach','closing']
 };
+const DOC_PLACEHOLDER_RE = /\[[^\]\n]*(입력|기재)[^\]\n]*\]/;
 const DOC_CHECK_ITEMS = ['수량 확인', '규격·사양 일치', '외관 상태', '포장 상태', '성능·작동 상태'];
 const PARTY_KEYS = [['name','상호'],['rep','대표자'],['bno','사업자번호'],['addr','주소'],['tel','연락처']];
 
@@ -1920,6 +1923,24 @@ function docDefaults(tpl) {
     role: 'supplier', vendorId: '', stamp: true, me, ot, rows: [{ name: '', spec: '', unit: '', qty: '', price: '' }],
     f: { title: '', date: today(), delivDate: '', delivPlace: '', freight: '공급자', vatMode: '별도', payMethod: '계좌이체',
          payTerm: '검수 합격 후 30일 이내', account: '', inspDays: '7', warrantyMonths: '12', lateRate: '0.1', period: '', court: '', special: '' }
+  };
+  if (tpl === 'explain') return {
+    role: 'supplier', vendorId: '', stamp: true, me, ot,
+    rows: [
+      { doc: '전자세금계산서(수정분) · 거래명세서', name: '프레시아 800G·600G', reason: '대금 청구 및 정산을 위한 최종 발주처(고객사) 기준 명칭' },
+      { doc: '디자인 시안(인쇄사양서)', name: '유러피안 800g·600g', reason: '실제 박스 겉면에 인쇄된 브랜드 명칭' },
+      { doc: '검수보고서(1차 제출분)', name: '와이팜 800G·600G/500G', reason: '공장 생산 및 검수 파트에서 구분하는 내부 프로젝트 명칭' }
+    ],
+    f: {
+      to: '', title: '4월분 납품 관련 서류상 품목명 표기 상이에 대한 소명', date: today(),
+      intro: '안녕하십니까.\n4월분 거래 증빙 자료 중 동일한 박스 제작 건에 대해 서류별 품목명이 다르게 기재된 사유를 아래와 같이 설명드립니다.',
+      conclusion: '전자세금계산서, 인쇄사양서, 검수보고서에 기재된 품목은 모두 박스 사이즈와 규격(800G·600G)이 일치하는 동일 품목입니다.\n해당 건은 동일한 박스 규격에 인쇄 내용만 다르게 들어가는 작업이었으며, 업무 진행 단계와 담당 파트에 따라 부르는 명칭이 달라 서류상 표기에 차이가 생겼습니다.',
+      basis: '이미 제출한 인쇄사양서의 박스 사이즈 및 규격을 확인하시면, 청구된 거래명세서상의 품목과 동일한 제품임을 확인하실 수 있습니다.\n즉, 물리적으로 같은 박스에 대해 영업·디자인·생산 파트별로 명칭만 다르게 기재된 표기상의 차이입니다.',
+      extra: '[검수보고서에 함께 기재된 500G의 사유를 입력하세요]',
+      future: '향후 제출하는 모든 서류의 품목명을 발주처 기준으로 일원화하여 업무에 혼선이 없도록 관리하겠습니다.',
+      attach: '인쇄사양서(디자인 시안) 사본 1부\n전자세금계산서(수정분) 사본 1부\n거래명세서 사본 1부\n검수보고서(1차 제출분) 사본 1부',
+      closing: '이 점 너른 양해 부탁드립니다.\n감사합니다.'
+    }
   };
   return {
     role: 'buyer', vendorId: '', stamp: true, me, ot, rows: [{ name: '', spec: '', unit: '', ord: '', del: '', pass: '', rej: '', note: '' }],
@@ -1987,7 +2008,8 @@ function renderDocs(el) {
   const roleHtml = bizSel + `<div style="display:flex;gap:16px;flex-wrap:wrap;margin-bottom:12px;font-size:13px"><b>내 입장</b>
     ${roleLabels.map(([v, l]) => `<label style="cursor:pointer"><input type="radio" name="doc-role" value="${v}" ${st.role === v ? 'checked' : ''}> ${l}</label>`).join('')}</div>`;
 
-  let fields = '';
+  let fields = '', fieldsAfter = '';
+  const isExplain = docTpl === 'explain';
   if (docTpl === 'contract') {
     fields = `<div class="form-grid">
       ${inp('doc-f-title', '계약명', f.title, '예: ○○ 자재 공급 계약', 'full')}
@@ -2005,6 +2027,22 @@ function renderDocs(el) {
       ${inp('doc-f-lateRate', '지체상금률 (1일당 %)', f.lateRate)}
       ${inp('doc-f-court', '관할법원', f.court, '예: 서울중앙지방법원')}
       ${area('doc-f-special', '특약사항', f.special, '추가로 합의한 내용을 줄바꿈으로 입력 (없으면 비워두세요)')}
+    </div>`;
+  } else if (docTpl === 'explain') {
+    const big = (id, label, val, ph, rows) => `<div class="form-group full"><label>${label}</label><textarea id="${id}" class="form-control" rows="${rows || 3}" placeholder="${docEsc(ph || '')}">${docEsc(val)}</textarea></div>`;
+    fields = `<div class="form-grid">
+      ${inp('doc-f-to', '수신', f.to, '예: ○○○○진흥원 사업담당자 귀하', 'full')}
+      ${inp('doc-f-title', '제목', f.title, '', 'full')}
+      ${inp('doc-f-date', '작성일', f.date)}
+      ${big('doc-f-intro', '서두 (인사)', f.intro, '', 3)}
+      ${big('doc-f-conclusion', '1. 결론', f.conclusion, '한 문장으로 먼저 결론을 적으세요', 4)}
+    </div>`;
+    fieldsAfter = `<div class="form-grid">
+      ${big('doc-f-basis', '3. 동일 품목 확인 근거', f.basis, '어떤 증빙에서 확인할 수 있는지', 4)}
+      ${big('doc-f-extra', '4. 추가 설명 (비우면 문서에서 빠짐)', f.extra, '예: 서류 간 규격·수량이 다른 부분의 사유', 3)}
+      ${big('doc-f-future', '5. 향후 조치', f.future, '', 2)}
+      ${big('doc-f-attach', '첨부 증빙 (한 줄에 하나씩 — 문서에 번호가 붙습니다)', f.attach, '', 4)}
+      ${big('doc-f-closing', '맺음말', f.closing, '', 2)}
     </div>`;
   } else {
     fields = `<div class="form-grid">
@@ -2040,8 +2078,8 @@ function renderDocs(el) {
     <button class="btn btn-ghost btn-sm" onclick="openStampModal()">🔴 도장 설정</button></div>
     <div style="display:flex;gap:4px;margin-bottom:16px;flex-wrap:wrap">${tabs}</div>
     <div id="doc-form">
-      ${roleHtml}
-      <div class="card" style="margin-bottom:12px">
+      ${isExplain ? bizSel : roleHtml}
+      <div class="card" style="margin-bottom:12px;${isExplain ? 'display:none' : ''}">
         <div class="card-title" style="margin-bottom:8px">상대방 거래처 · 거래 불러오기 <span style="font-size:11px;font-weight:400;color:var(--gray-400)">(선택 — 안 쓰고 직접 입력해도 됩니다)</span></div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
           <select id="doc-vendor" class="form-control" style="flex:1;min-width:200px" onchange="docPickVendor()"><option value="">거래처 선택 (또는 아래 직접 입력)</option>${vOpts}</select>
@@ -2049,21 +2087,22 @@ function renderDocs(el) {
         </div>
       </div>
       <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:12px;margin-bottom:12px">
-        ${party('me', '내 회사', st.me)}
-        ${party('ot', '상대방', st.ot)}
+        ${party('me', isExplain ? '발신 (내 회사)' : '내 회사', st.me)}
+        ${isExplain ? '' : party('ot', '상대방', st.ot)}
       </div>
       ${fields}
-      <div class="card" style="margin:12px 0"><div class="card-title" style="margin-bottom:8px">${docTpl === 'contract' ? '공급물품 내역' : '검수 품목'}</div>
+      <div class="card" style="margin:12px 0"><div class="card-title" style="margin-bottom:8px">${docTpl === 'contract' ? '공급물품 내역' : isExplain ? '2. 서류별 품목명 표기 대조' : '검수 품목'}</div>
         <div id="doc-rows"></div>
-        <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="docAddRow()">+ 품목 추가</button>
+        <button class="btn btn-ghost btn-sm" style="margin-top:8px" onclick="docAddRow()">+ ${isExplain ? '서류 추가' : '품목 추가'}</button>
       </div>
+      ${fieldsAfter}
       <div style="display:flex;gap:8px;flex-wrap:wrap">
         <button class="btn btn-primary" onclick="docGenerate()">📄 생성하기</button>
         <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer;margin:0 6px" title="${stampUrl() ? '' : '도장이 아직 없습니다. 도장 설정에서 만들어주세요'}">
           <input type="checkbox" id="doc-stamp" ${st.stamp !== false && stampUrl() ? 'checked' : ''} ${stampUrl() ? '' : 'disabled'}> 🔴 도장 찍기${stampUrl() ? '' : ' (도장 없음)'}</label>
         <button class="btn btn-ghost" onclick="docReset()">↺ 초기화</button>
       </div>
-      <div style="font-size:11px;color:var(--gray-400);margin-top:10px">${docTpl === 'contract' ? '※ 일반적인 물품공급계약 양식입니다. 금액이 크거나 특수한 계약은 서명 전에 전문가(법무사·변호사) 검토를 받으세요.' : '※ 수량 불일치 품목은 문서에 자동으로 표시됩니다.'}</div>
+      <div style="font-size:11px;color:var(--gray-400);margin-top:10px">${docTpl === 'contract' ? '※ 일반적인 물품공급계약 양식입니다. 금액이 크거나 특수한 계약은 서명 전에 전문가(법무사·변호사) 검토를 받으세요.' : isExplain ? '※ [ ] 안의 안내 문구가 남아 있으면 생성할 때 알려드립니다. 소명 내용은 제출 증빙과 사실이 일치해야 합니다.' : '※ 수량 불일치 품목은 문서에 자동으로 표시됩니다.'}</div>
     </div>`;
   docRenderTxOptions();
   docRenderRows();
@@ -2106,7 +2145,7 @@ function docPickTx() {
 }
 
 function docAddRow() {
-  docRows.push(docTpl === 'contract' ? { name: '', spec: '', unit: '', qty: '', price: '' } : { name: '', spec: '', unit: '', ord: '', del: '', pass: '', rej: '', note: '' });
+  docRows.push(docTpl === 'contract' ? { name: '', spec: '', unit: '', qty: '', price: '' } : docTpl === 'explain' ? { doc: '', name: '', reason: '' } : { name: '', spec: '', unit: '', ord: '', del: '', pass: '', rej: '', note: '' });
   docRenderRows();
 }
 function docDelRow(i) {
@@ -2137,7 +2176,11 @@ function docRenderRows() {
   const ni = (i, k, w) => `<input class="form-control" type="text" inputmode="numeric" style="min-width:${w}px;text-align:right" value="${docEsc(docRows[i][k])}" oninput="docRowEdit(${i},'${k}',this)">`;
   const del = i => `<td style="text-align:center"><button class="btn btn-danger btn-sm" onclick="docDelRow(${i})">✕</button></td>`;
   let head, body;
-  if (docTpl === 'contract') {
+  if (docTpl === 'explain') {
+    const ta = (i, k, ph, w) => `<textarea class="form-control" rows="2" style="min-width:${w}px" placeholder="${ph}" oninput="docRowEdit(${i},'${k}',this)">${docEsc(docRows[i][k])}</textarea>`;
+    head = '<th style="width:30%">서류</th><th style="width:25%">기재된 품목명</th><th>명칭 기준 · 사유</th><th style="width:40px"></th>';
+    body = docRows.map((r, i) => `<tr><td>${ta(i, 'doc', '예: 거래명세서', 150)}</td><td>${ta(i, 'name', '예: 프레시아 800G', 120)}</td><td>${ta(i, 'reason', '왜 이 이름으로 적혔는지', 180)}</td>${del(i)}</tr>`).join('');
+  } else if (docTpl === 'contract') {
     head = '<th>품명</th><th>규격</th><th style="width:70px">단위</th><th style="width:90px">수량</th><th style="width:110px">단가</th><th style="width:110px;text-align:right">금액</th><th style="width:40px"></th>';
     body = docRows.map((r, i) => `<tr><td>${ti(i, 'name', '품명', 140)}</td><td>${ti(i, 'spec', '규격', 100)}</td><td>${ti(i, 'unit', 'EA', 50)}</td>
       <td>${ni(i, 'qty', 70)}</td><td>${ni(i, 'price', 90)}</td><td class="doc-amt" style="text-align:right">${docFmtN(docNum(r.qty) * docNum(r.price))}</td>${del(i)}</tr>`).join('');
@@ -2162,6 +2205,12 @@ function docGenerate() {
   docStates[docTpl] = d;
   DB.save('acc_doc_draft_' + docTpl, d);
   const other = d.ot.name || '상대방';
+  if (docTpl === 'explain') {
+    const left = [...Object.values(d.f), ...d.rows.flatMap(r => Object.values(r))].filter(v => DOC_PLACEHOLDER_RE.test(String(v || '')));
+    if (left.length && !confirm(`아직 채우지 않은 안내 문구가 있습니다:\n\n${left.map(v => '• ' + String(v).match(DOC_PLACEHOLDER_RE)[0]).join('\n')}\n\n그대로 생성할까요? (문서에 그 문구가 그대로 찍힙니다)`)) return;
+    openDocWindow(`소명서_${(d.f.title || '').slice(0, 20)}_${d.f.date}`, docExplainHtml(d));
+    return;
+  }
   if (docTpl === 'contract') {
     openDocWindow(`물품공급계약서_${other}_${d.f.date}`, docContractHtml(d));
   } else {
@@ -2285,6 +2334,38 @@ function docInspectionHtml(d) {
       <td class="sg"><div class="sgt">입회자</div><div>${f.witnessRank ? docEsc(f.witnessRank) + ' ' : ''}${docBlank(f.witness, 4)} &nbsp;(인)</div></td>
       <td class="sg"><div class="sgt">납품업체 확인</div><div>${docBlank(supplier.name, 5)} &nbsp;${d.role === 'supplier' ? stampMark(d.stamp) : '(인)'}</div></td>
     </tr></table>`;
+}
+
+function docExplainHtml(d) {
+  const f = d.f, me = d.me;
+  const para = t => docNl(t).split('<br>').map(l => l.trim() ? `<p>${l}</p>` : '').join('');
+  const rows = d.rows.filter(r => r.doc || r.name || r.reason);
+  const table = rows.length ? `<table class="grid"><thead><tr><th style="width:30px">No</th><th style="width:30%">서류</th><th style="width:24%">기재된 품목명</th><th>명칭 기준 · 사유</th></tr></thead><tbody>
+    ${rows.map((r, i) => `<tr><td>${i + 1}</td><td class="l">${docNl(r.doc)}</td><td class="l"><b>${docNl(r.name)}</b></td><td class="l">${docNl(r.reason)}</td></tr>`).join('')}</tbody></table>` : '';
+  const secs = [
+    ['결론', f.conclusion ? para(f.conclusion) : ''],
+    ['서류별 품목명 표기 대조', table],
+    ['동일 품목 확인 근거', f.basis ? para(f.basis) : ''],
+    ['추가 설명', f.extra ? para(f.extra) : ''],
+    ['향후 조치', f.future ? para(f.future) : '']
+  ].filter(([, body]) => body);
+  const attach = String(f.attach || '').split('\n').map(l => l.trim()).filter(Boolean);
+  const hl = t => t.replace(/(\[[^\]<]*(입력|기재)[^\]<]*\])/g, '<span class="red">$1</span>');
+  return hl(`<div class="title">소 명 서</div>
+    <table class="grid info">
+      <tr><th>수 신</th><td>${docEsc(f.to) || docBlank('', 12)}</td></tr>
+      <tr><th>제 목</th><td><b>${docEsc(f.title)}</b></td></tr>
+      <tr><th>발 신</th><td>${docEsc(me.name)}${me.rep ? ` (대표 ${docEsc(me.rep)})` : ''}</td></tr>
+      <tr><th>작성일</th><td>${docDateKo(f.date)}</td></tr>
+    </table>
+    <div style="margin:14px 0 6px">${para(f.intro)}</div>
+    ${secs.map(([t, body], i) => `<div class="art"><div class="sec">${i + 1}. ${t}</div><div style="margin-left:8px">${body}</div></div>`).join('')}
+    ${attach.length ? `<div class="art"><div class="sec">붙임</div><div style="margin-left:8px">${attach.map((a, i) => `<p>${i + 1}. ${docEsc(a)}</p>`).join('')}</div></div>` : ''}
+    <div style="margin:14px 0">${para(f.closing)}</div>
+    <div class="dt">${docDateKo(f.date)}</div>
+    <table class="sign" style="width:60%;margin-left:auto"><tr><td class="sg"><div class="sgt">발 신</div>
+      <div>상 호 : ${docBlank(me.name, 7)}</div><div>사업자번호 : ${docBlank(me.bno, 6)}</div><div>주 소 : ${docBlank(me.addr, 8)}</div>${me.tel ? `<div>연락처 : ${docEsc(me.tel)}</div>` : ''}
+      <div class="sgs">대 표 자 : ${docBlank(me.rep, 4)} &nbsp;&nbsp;${stampMark(d.stamp)}</div></td></tr></table>`);
 }
 
 function openDocWindow(title, bodyHtml) {
