@@ -1941,18 +1941,22 @@ function docDefaults(tpl) {
   const sameRep = prevName && pc.representative && pc.representative === me.rep;
   if (tpl === 'explain') return {
     role: 'supplier', vendorId: '', stamp: true, me, ot,
-    rows: [
-      { doc: `전자세금계산서(수정분) · 거래명세서${prevName ? ` (${prevName} 명의 발행)` : ''}`, name: '프레시아 800G·600G', reason: '대금 청구 및 정산을 위한 최종 발주처(고객사) 기준 명칭' },
-      { doc: '디자인 시안(인쇄사양서)', name: '유러피안 800g·600g', reason: '실제 박스 겉면에 인쇄된 브랜드 명칭' },
-      { doc: '검수보고서(1차 제출분)', name: '와이팜 800G·600G/500G', reason: '공장 생산 및 검수 파트에서 구분하는 내부 프로젝트 명칭' }
-    ],
+    rows: (() => {
+      const invDoc = `전자세금계산서(수정분) · 거래명세서${prevName ? ` (${prevName} 명의 발행)` : ''}`;
+      const R = [
+        [invDoc, '프레시아', '대금 청구 및 정산을 위한 최종 발주처(고객사) 기준 명칭'],
+        ['디자인 시안(인쇄사양서)', '유러피안', '실제 박스 겉면에 인쇄된 브랜드 명칭'],
+        ['검수보고서(1차 제출분)', '와이팜', '공장 생산 및 검수 파트에서 구분하는 내부 프로젝트 명칭']
+      ];
+      return R.flatMap(([doc, brand, reason]) => ['800G', '600G'].map(spec => ({ doc, spec, name: `${brand} ${brand === '유러피안' ? spec.toLowerCase() : spec}`, reason })));
+    })(),
     f: {
       to: '', title: '4월분 납품 관련 서류상 품목명 표기 상이에 대한 소명', date: today(),
       intro: '안녕하십니까.\n4월분 거래 증빙 자료 중 동일한 박스 제작 건에 대해 서류별 품목명이 다르게 기재된 사유를 아래와 같이 설명드립니다.',
-      conclusion: '전자세금계산서, 인쇄사양서, 검수보고서에 기재된 품목은 모두 박스 사이즈와 규격(800G·600G)이 일치하는 동일 품목입니다.\n해당 건은 동일한 박스 규격에 인쇄 내용만 다르게 들어가는 작업이었으며, 업무 진행 단계와 담당 파트에 따라 부르는 명칭이 달라 서류상 표기에 차이가 생겼습니다.',
+      conclusion: '해당 건은 800G와 600G 두 가지 품목입니다.\n전자세금계산서, 인쇄사양서, 검수보고서에 기재된 품목은 규격별로 각각 박스 사이즈와 규격이 일치하는 동일 품목입니다(800G는 800G끼리, 600G는 600G끼리 동일).\n두 품목 모두 동일한 박스 규격에 인쇄 내용만 다르게 들어가는 작업이었으며, 업무 진행 단계와 담당 파트에 따라 부르는 명칭이 달라 서류상 표기에 차이가 생겼습니다.',
       prevName, prevBno: pc.businessNumber || '', prevRep: pc.representative || '', changeDate: '',
       changeNote: prevName ? `4월분 납품 및 세금계산서 발행은 이전 사업자인 ${prevName}${pc.businessNumber ? `(사업자등록번호 ${pc.businessNumber})` : ''} 명의로 진행되었으며, 이후 사업자 변경에 따라 ${me.name || '현 사업자'}${me.bno ? `(사업자등록번호 ${me.bno})` : ''} 명의로 거래를 이어가고 있습니다.${sameRep ? `\n두 사업자의 대표자는 ${me.rep}${josaRo(me.rep)} 동일합니다.` : ''}\n[사업자 변경 사유를 입력하세요]` : '',
-      basis: '이미 제출한 인쇄사양서의 박스 사이즈 및 규격을 확인하시면, 청구된 거래명세서상의 품목과 동일한 제품임을 확인하실 수 있습니다.\n즉, 물리적으로 같은 박스에 대해 영업·디자인·생산 파트별로 명칭만 다르게 기재된 표기상의 차이입니다.',
+      basis: '이미 제출한 인쇄사양서의 800G·600G 박스 사이즈 및 규격을 확인하시면, 청구된 거래명세서상의 800G·600G 품목과 각각 동일한 제품임을 확인하실 수 있습니다.\n즉, 물리적으로 같은 박스에 대해 영업·디자인·생산 파트별로 명칭만 다르게 기재된 표기상의 차이입니다.',
       extra: '[검수보고서에 함께 기재된 500G의 사유를 입력하세요]',
       future: '향후 제출하는 모든 서류의 품목명을 발주처 기준으로 일원화하여 업무에 혼선이 없도록 관리하겠습니다.',
       attach: '인쇄사양서(디자인 시안) 사본 1부\n전자세금계산서(수정분) 사본 1부\n거래명세서 사본 1부\n검수보고서(1차 제출분) 사본 1부' + (prevName ? `\n사업자등록증 사본(${prevName}, ${me.name || '현 사업자'}) 각 1부` : ''),
@@ -2180,7 +2184,7 @@ function docPickTx() {
 }
 
 function docAddRow() {
-  docRows.push(docTpl === 'contract' ? { name: '', spec: '', unit: '', qty: '', price: '' } : docTpl === 'explain' ? { doc: '', name: '', reason: '' } : { name: '', spec: '', unit: '', ord: '', del: '', pass: '', rej: '', note: '' });
+  docRows.push(docTpl === 'contract' ? { name: '', spec: '', unit: '', qty: '', price: '' } : docTpl === 'explain' ? { doc: '', spec: '', name: '', reason: '' } : { name: '', spec: '', unit: '', ord: '', del: '', pass: '', rej: '', note: '' });
   docRenderRows();
 }
 function docDelRow(i) {
@@ -2213,8 +2217,8 @@ function docRenderRows() {
   let head, body;
   if (docTpl === 'explain') {
     const ta = (i, k, ph, w) => `<textarea class="form-control" rows="2" style="min-width:${w}px" placeholder="${ph}" oninput="docRowEdit(${i},'${k}',this)">${docEsc(docRows[i][k])}</textarea>`;
-    head = '<th style="width:30%">서류</th><th style="width:25%">기재된 품목명</th><th>명칭 기준 · 사유</th><th style="width:40px"></th>';
-    body = docRows.map((r, i) => `<tr><td>${ta(i, 'doc', '예: 거래명세서', 150)}</td><td>${ta(i, 'name', '예: 프레시아 800G', 120)}</td><td>${ta(i, 'reason', '왜 이 이름으로 적혔는지', 180)}</td>${del(i)}</tr>`).join('');
+    head = '<th style="width:28%">서류</th><th style="width:90px">품목(규격)</th><th style="width:22%">기재된 품목명</th><th>명칭 기준 · 사유</th><th style="width:40px"></th>';
+    body = docRows.map((r, i) => `<tr><td>${ta(i, 'doc', '예: 거래명세서', 140)}</td><td>${ti(i, 'spec', '800G', 70)}</td><td>${ta(i, 'name', '예: 프레시아 800G', 110)}</td><td>${ta(i, 'reason', '왜 이 이름으로 적혔는지 (같은 서류면 같은 내용)', 170)}</td>${del(i)}</tr>`).join('');
   } else if (docTpl === 'contract') {
     head = '<th>품명</th><th>규격</th><th style="width:70px">단위</th><th style="width:90px">수량</th><th style="width:110px">단가</th><th style="width:110px;text-align:right">금액</th><th style="width:40px"></th>';
     body = docRows.map((r, i) => `<tr><td>${ti(i, 'name', '품명', 140)}</td><td>${ti(i, 'spec', '규격', 100)}</td><td>${ti(i, 'unit', 'EA', 50)}</td>
@@ -2376,8 +2380,14 @@ function docExplainHtml(d) {
   const f = d.f, me = d.me;
   const para = t => docNl(t).split('<br>').map(l => l.trim() ? `<p>${l}</p>` : '').join('');
   const rows = d.rows.filter(r => r.doc || r.name || r.reason);
-  const table = rows.length ? `<table class="grid"><thead><tr><th style="width:30px">No</th><th style="width:30%">서류</th><th style="width:24%">기재된 품목명</th><th>명칭 기준 · 사유</th></tr></thead><tbody>
-    ${rows.map((r, i) => `<tr><td>${i + 1}</td><td class="l">${docNl(r.doc)}</td><td class="l"><b>${docNl(r.name)}</b></td><td class="l">${docNl(r.reason)}</td></tr>`).join('')}</tbody></table>` : '';
+  const groups = [];
+  rows.forEach(r => { const g = groups[groups.length - 1]; if (g && (g.doc || '').trim() === (r.doc || '').trim()) g.items.push(r); else groups.push({ doc: r.doc, items: [r] }); });
+  const hasSpec = rows.some(r => r.spec);
+  const table = rows.length ? `<table class="grid"><thead><tr><th style="width:30px">No</th><th style="width:28%">서류</th>${hasSpec ? '<th style="width:70px">품목</th>' : ''}<th style="width:22%">기재된 품목명</th><th>명칭 기준 · 사유</th></tr></thead><tbody>
+    ${groups.map((g, gi) => {
+      const n = g.items.length, sameReason = g.items.every(x => (x.reason || '') === (g.items[0].reason || ''));
+      return g.items.map((r, k) => `<tr>${k === 0 ? `<td rowspan="${n}">${gi + 1}</td><td class="l" rowspan="${n}">${docNl(g.doc)}</td>` : ''}${hasSpec ? `<td>${docEsc(r.spec)}</td>` : ''}<td class="l"><b>${docNl(r.name)}</b></td>${sameReason ? (k === 0 ? `<td class="l" rowspan="${n}">${docNl(r.reason)}</td>` : '') : `<td class="l">${docNl(r.reason)}</td>`}</tr>`).join('');
+    }).join('')}</tbody></table>` : '';
   const secs = [
     ['결론', f.conclusion ? para(f.conclusion) : ''],
     ['사업자 변경 경위', f.changeNote ? para(f.changeNote) : ''],
